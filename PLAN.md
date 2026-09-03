@@ -19,9 +19,11 @@ Host sets rounds, lives, and **the stake**. Fight. Scoreboard names who pays.
 
 ## Controls — this is where it lives or dies
 
-Left thumb steers (two zones: left half / right half). Right thumb gets one
-attack button and one jump button. Two buttons, maximum. Landscape, and
-generous hitboxes, because people hold a phone in one hand.
+Left thumb steers with a floating stick: put a thumb down anywhere in the left
+half and drag left or right. Nothing is drawn there until you touch it, so the
+left half of the arena stays clear. Right thumb gets one attack button and one
+jump button. Two buttons, maximum. Landscape, and generous hitboxes, because
+people hold a phone in one hand.
 
 ## Combat
 

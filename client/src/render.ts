@@ -5,7 +5,7 @@ import {
   PLAYER_HEIGHT,
   PLAYER_WIDTH,
 } from "@stickstakes/shared";
-import type { ControlZone } from "./input.js";
+import { STICK_MAX_OFFSET, type ControlZone, type StickState } from "./input.js";
 
 /**
  * Canvas renderer. The arena is a fixed 960x540 world that gets letterboxed
@@ -151,14 +151,53 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     ctx.restore();
   }
 
-  /** Screen-space overlay: the two thumb clusters. */
+  /**
+   * Screen-space overlay: the steering stick and the two buttons.
+   *
+   * The stick is drawn only while a thumb is on it — at rest the left half of
+   * the screen is bare, so nothing sits between you and the fight.
+   */
   function drawControls(
     zones: readonly ControlZone[],
     active: ReadonlySet<ControlZone["id"]>,
+    stick: Readonly<StickState>,
   ): void {
     ctx.save();
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
+
+    if (stick.active) {
+      const dx = stick.x - stick.originX;
+
+      // The origin, ringed at exactly the distance the thumb can reach before
+      // the origin starts trailing it — so the thumb is always on or inside it.
+      ctx.beginPath();
+      ctx.arc(stick.originX, stick.originY, STICK_MAX_OFFSET, 0, Math.PI * 2);
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = "rgba(255,255,255,0.16)";
+      ctx.stroke();
+
+      // A bar out to the thumb, so the committed direction reads at a glance.
+      if (Math.abs(dx) > 1) {
+        ctx.beginPath();
+        ctx.moveTo(stick.originX, stick.originY);
+        ctx.lineTo(stick.x, stick.y);
+        ctx.lineWidth = 3;
+        ctx.lineCap = "round";
+        ctx.strokeStyle = "rgba(255,255,255,0.22)";
+        ctx.stroke();
+      }
+
+      // The thumb itself.
+      ctx.beginPath();
+      ctx.arc(stick.x, stick.y, 21, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(255,255,255,0.14)";
+      ctx.fill();
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = "rgba(255,255,255,0.3)";
+      ctx.stroke();
+    }
+
     for (const zone of zones) {
       const lit = active.has(zone.id);
       ctx.beginPath();

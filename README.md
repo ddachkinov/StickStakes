@@ -33,6 +33,13 @@ Open <http://localhost:5173> in two tabs and you have two stickmen. Keyboard:
 arrows or WASD to move, space to jump, J to attack (attack is wired end-to-end
 but does nothing yet).
 
+On touch, the left half of the screen is a floating stick: put a thumb down
+anywhere in it and that spot becomes the origin, then drag right or left to run.
+Drag far enough and the origin trails your thumb, so you can cross the whole
+arena on one stroke and still turn around with a short flick. Nothing is drawn
+there until you touch it. The right half keeps two real buttons, jump and
+attack; both thumbs work at once.
+
 ### On a phone
 
 ```bash

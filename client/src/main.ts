@@ -147,7 +147,7 @@ async function main(): Promise<void> {
     }
 
     renderer.endWorld();
-    renderer.drawControls(input.zones, input.active);
+    renderer.drawControls(input.zones, input.active, input.stick);
 
     if (now - debugAt > 250) {
       debugAt = now;
