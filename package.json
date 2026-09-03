@@ -1,0 +1,28 @@
+{
+  "name": "stickstakes",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "workspaces": [
+    "shared",
+    "server",
+    "client"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build:shared": "npm --workspace @stickstakes/shared run build",
+    "dev": "npm run build:shared && concurrently -k -n shared,server,client -c gray,cyan,magenta \"npm --workspace @stickstakes/shared run dev\" \"npm --workspace @stickstakes/server run dev\" \"npm --workspace @stickstakes/client run dev\"",
+    "dev:phone": "npm run build:shared && concurrently -k -n shared,server,client,tunnel -c gray,cyan,magenta,green \"npm --workspace @stickstakes/shared run dev\" \"npm --workspace @stickstakes/server run dev\" \"npm --workspace @stickstakes/client run dev\" \"node scripts/tunnel.mjs\"",
+    "tunnel": "node scripts/tunnel.mjs",
+    "build": "npm run build:shared && npm --workspace @stickstakes/server run build && npm --workspace @stickstakes/client run build",
+    "typecheck": "npm run build:shared && npm --workspace @stickstakes/server run typecheck && npm --workspace @stickstakes/client run typecheck",
+    "start": "npm --workspace @stickstakes/server run start"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.5",
+    "typescript": "^5.9.3",
+    "qrcode-terminal": "^0.12.0"
+  }
+}
