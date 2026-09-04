@@ -1,5 +1,7 @@
 import {
   AIR_ACCEL,
+  ATTACK_BOX_HEIGHT,
+  ATTACK_REACH,
   AIR_FRICTION,
   COYOTE_TICKS,
   FIXED_DT,
@@ -18,7 +20,7 @@ import {
   SPAWN_POINTS,
   type Rect,
 } from "./constants.js";
-import type { InputIntent, PlayerBody } from "./types.js";
+import { NEUTRAL_INPUT, type InputIntent, type PlayerBody } from "./types.js";
 
 /**
  * The one physics step. The server runs it to produce truth; the client runs
@@ -41,6 +43,7 @@ export function spawnBody(spawnIndex: number): PlayerBody {
     jumpBuffer: 0,
     jumpHeld: false,
     frozen: false,
+    stunned: false,
   };
 }
 
@@ -55,6 +58,7 @@ export function copyBody(from: PlayerBody, into: PlayerBody): void {
   into.jumpBuffer = from.jumpBuffer;
   into.jumpHeld = from.jumpHeld;
   into.frozen = from.frozen;
+  into.stunned = from.stunned;
 }
 
 export function bodyAabb(body: PlayerBody): Rect {
@@ -66,7 +70,8 @@ export function bodyAabb(body: PlayerBody): Rect {
   };
 }
 
-function overlaps(a: Rect, b: Rect): boolean {
+/** Axis-aligned overlap test. Exported so the server can run hit detection. */
+export function overlapsRect(a: Rect, b: Rect): boolean {
   return (
     a.x < b.x + b.width &&
     a.x + a.width > b.x &&
@@ -94,7 +99,11 @@ export function stepBody(
     return false;
   }
 
-  const dir = (input.right ? 1 : 0) - (input.left ? 1 : 0);
+  // Hitstun takes the controls away but leaves the physics running, so a
+  // knocked player keeps flying along the arc the hit gave them.
+  const cmd = body.stunned ? NEUTRAL_INPUT : input;
+
+  const dir = (cmd.right ? 1 : 0) - (cmd.left ? 1 : 0);
 
   // --- horizontal: accelerate toward the target speed, else bleed off ---
   const accel = body.grounded ? GROUND_ACCEL : AIR_ACCEL;
@@ -111,7 +120,7 @@ export function stepBody(
   }
 
   // --- jump: buffered press + coyote time, so mistimed thumbs still work ---
-  const jumpPressed = input.jump && !body.jumpHeld;
+  const jumpPressed = cmd.jump && !body.jumpHeld;
   if (jumpPressed) body.jumpBuffer = JUMP_BUFFER_TICKS;
 
   if (body.jumpBuffer > 0 && body.coyote > 0) {
@@ -121,8 +130,8 @@ export function stepBody(
     body.grounded = false;
   }
   // Short hop: let go on the way up and the rise is cut.
-  if (!input.jump && body.vy < 0) body.vy *= JUMP_CUT_MULTIPLIER;
-  body.jumpHeld = input.jump;
+  if (!cmd.jump && body.vy < 0) body.vy *= JUMP_CUT_MULTIPLIER;
+  body.jumpHeld = cmd.jump;
 
   // --- vertical: gravity, capped ---
   body.vy = Math.min(MAX_FALL_SPEED, body.vy + GRAVITY * dt);
@@ -148,7 +157,7 @@ export function stepBody(
 function resolveHorizontal(body: PlayerBody): void {
   const box = bodyAabb(body);
   for (const platform of PLATFORMS) {
-    if (!overlaps(box, platform)) continue;
+    if (!overlapsRect(box, platform)) continue;
     // Push out along the shallower horizontal side.
     const fromLeft = platform.x - (box.x + box.width);
     const fromRight = platform.x + platform.width - box.x;
@@ -162,7 +171,7 @@ function resolveHorizontal(body: PlayerBody): void {
 function resolveVertical(body: PlayerBody): void {
   const box = bodyAabb(body);
   for (const platform of PLATFORMS) {
-    if (!overlaps(box, platform)) continue;
+    if (!overlapsRect(box, platform)) continue;
     if (body.vy >= 0) {
       // Falling onto the top face.
       body.y = platform.y;
@@ -180,4 +189,20 @@ function resolveVertical(body: PlayerBody): void {
 /** Put a body back at its spawn point, in place. Used on both sides. */
 export function respawnBody(body: PlayerBody, spawnIndex: number): void {
   copyBody(spawnBody(spawnIndex), body);
+}
+
+/**
+ * The rectangle an attack sweeps, in front of the attacker. Lives here rather
+ * than on the server so the client can draw it while tuning, and so a future
+ * client-side hit prediction reads the exact same geometry.
+ */
+export function attackHitbox(body: PlayerBody): Rect {
+  const forward = body.facing >= 0;
+  const nose = body.x + (forward ? PLAYER_WIDTH * 0.3 : -PLAYER_WIDTH * 0.3);
+  return {
+    x: forward ? nose : nose - ATTACK_REACH,
+    y: body.y - PLAYER_HEIGHT * 0.9,
+    width: ATTACK_REACH,
+    height: ATTACK_BOX_HEIGHT,
+  };
 }

@@ -1,11 +1,22 @@
 import { Room, type Client, logger } from "@colyseus/core";
 import {
   ArenaState,
+  ATTACK_ACTIVE_MS,
   ATTACK_RECOVERY_MS,
+  ATTACK_STARTUP_MS,
   ATTACK_SWING_MS,
   COUNTDOWN_MS,
+  HITSTUN_BASE_MS,
+  HITSTUN_MAX_MS,
+  HITSTUN_PER_DAMAGE_MS,
+  HIT_DAMAGE,
+  KNOCKBACK_BASE,
+  KNOCKBACK_LIFT,
+  KNOCKBACK_SCALING,
+  KNOCKBACK_UP_RATIO,
   FightInput,
   LIVES_PER_ROUND,
+  MAX_DAMAGE,
   MAX_PLAYERS,
   MIN_PLAYERS,
   PLAYER_COLORS,
@@ -17,7 +28,10 @@ import {
   SPAWN_POINTS,
   TICK_RATE,
   TOTAL_ROUNDS,
+  attackHitbox,
+  bodyAabb,
   msToTicks,
+  overlapsRect,
   respawnBody,
   spawnBody,
   stepBody,
@@ -55,6 +69,12 @@ export class ArenaRoom extends Room<{ state: ArenaState; input: FightInput }> {
    */
   private roundStartedWith = 0;
 
+  /**
+   * Targets each attacker has already connected with during their current
+   * swing. Server-local and transient — it never needs to reach a client.
+   */
+  private hitThisSwing = new Map<string, Set<string>>();
+
   onCreate() {
     this.setState(new ArenaState());
     this.state.maxPlayers = MAX_PLAYERS;
@@ -76,6 +96,9 @@ export class ArenaRoom extends Room<{ state: ArenaState; input: FightInput }> {
     this.setFixedTimestep((ctx) => {
       this.state.tick++;
       this.stepPlayers(ctx.dt);
+      // Hits resolve after every body has moved, so a tick sees one consistent
+      // world rather than positions half-updated in map order.
+      this.resolveHits();
       this.updatePhase();
     }, TICK_RATE);
 
@@ -110,6 +133,7 @@ export class ArenaRoom extends Room<{ state: ArenaState; input: FightInput }> {
 
   onLeave(client: Client) {
     this.state.players.delete(client.sessionId);
+    this.hitThisSwing.delete(client.sessionId);
 
     // Hand the host role to whoever is still here, so the match isn't stuck.
     if (this.state.hostId === client.sessionId) {
@@ -136,7 +160,7 @@ export class ArenaRoom extends Room<{ state: ArenaState; input: FightInput }> {
       const input = this.inputs.get(sessionId).next();
       if (input === undefined) continue;
 
-      this.tryAttack(player, input.attack);
+      this.tryAttack(sessionId, player, input.attack);
 
       // `player` is structurally a PlayerBody — same function the client runs.
       const fellOff = stepBody(player, input, dt);
@@ -151,15 +175,15 @@ export class ArenaRoom extends Room<{ state: ArenaState; input: FightInput }> {
     }
   }
 
-  /**
-   * Start a swing if the button is down and the last one has fully recovered.
-   * Purely cosmetic for now — Track B spawns the hitbox off this same window.
-   */
-  private tryAttack(player: Player, pressed: boolean) {
-    if (!pressed || player.frozen) return;
+  /** Start a swing if the button is down and the last one has fully recovered. */
+  private tryAttack(sessionId: string, player: Player, pressed: boolean) {
+    if (!pressed || player.frozen || player.stunned) return;
     const readyAt = player.attackUntilTick + msToTicks(ATTACK_RECOVERY_MS);
     if (this.state.tick < readyAt) return;
+
     player.attackUntilTick = this.state.tick + msToTicks(ATTACK_SWING_MS);
+    // A fresh swing may hit everyone again.
+    this.hitThisSwing.set(sessionId, new Set());
   }
 
   private advanceTimers(player: Player) {
@@ -169,6 +193,79 @@ export class ArenaRoom extends Room<{ state: ArenaState; input: FightInput }> {
     if (player.invulnUntilTick !== 0 && this.state.tick >= player.invulnUntilTick) {
       player.invulnUntilTick = 0;
     }
+    if (player.stunUntilTick !== 0 && this.state.tick >= player.stunUntilTick) {
+      player.stunUntilTick = 0;
+      player.stunned = false;
+    }
+  }
+
+  // ----------------------------------------------------------------- combat
+
+  /**
+   * Is this player's swing in its active frames? A swing runs
+   * startup → active → the rest of the animation, so an attack is a
+   * commitment rather than a free button press.
+   */
+  private isSwingActive(player: Player): boolean {
+    if (player.attackUntilTick === 0) return false;
+    const since =
+      this.state.tick - (player.attackUntilTick - msToTicks(ATTACK_SWING_MS));
+    const startup = msToTicks(ATTACK_STARTUP_MS);
+    return since >= startup && since < startup + msToTicks(ATTACK_ACTIVE_MS);
+  }
+
+  /** Can this player be hit right now? */
+  private isHittable(player: Player): boolean {
+    return (
+      !player.spectating &&
+      !player.frozen &&
+      player.lives > 0 &&
+      player.deadUntilTick === 0 &&
+      player.invulnUntilTick <= this.state.tick
+    );
+  }
+
+  private resolveHits() {
+    if (this.state.phase !== "playing") return;
+
+    for (const [attackerId, attacker] of this.state.players) {
+      if (!this.isSwingActive(attacker)) continue;
+
+      const alreadyHit = this.hitThisSwing.get(attackerId);
+      const box = attackHitbox(attacker);
+
+      for (const [targetId, target] of this.state.players) {
+        if (targetId === attackerId) continue;
+        // One hit per target per swing — otherwise the box connects on every
+        // active tick and a single press would deal several hits.
+        if (alreadyHit?.has(targetId)) continue;
+        if (!this.isHittable(target)) continue;
+        if (!overlapsRect(box, bodyAabb(target))) continue;
+
+        alreadyHit?.add(targetId);
+        this.applyHit(attacker, target);
+      }
+    }
+  }
+
+  private applyHit(attacker: Player, target: Player) {
+    target.damage = Math.min(MAX_DAMAGE, target.damage + HIT_DAMAGE);
+
+    // Launch away from the attacker; ties break toward where they're facing.
+    const away =
+      target.x === attacker.x ? Math.sign(attacker.facing) || 1 : target.x < attacker.x ? -1 : 1;
+
+    const power = KNOCKBACK_BASE + target.damage * KNOCKBACK_SCALING;
+    target.vx = away * power;
+    target.vy = -(KNOCKBACK_LIFT + power * KNOCKBACK_UP_RATIO);
+    target.grounded = false;
+
+    const stunMs = Math.min(
+      HITSTUN_MAX_MS,
+      HITSTUN_BASE_MS + target.damage * HITSTUN_PER_DAMAGE_MS,
+    );
+    target.stunUntilTick = this.state.tick + msToTicks(stunMs);
+    target.stunned = true;
   }
 
   /** Cost a life. Either respawn shortly, or sit out the rest of the round. */
@@ -176,6 +273,8 @@ export class ArenaRoom extends Room<{ state: ArenaState; input: FightInput }> {
     player.lives -= 1;
     // Frozen where they fell — `stepBody` short-circuits, so no repeat kill.
     player.frozen = true;
+    player.stunned = false;
+    player.stunUntilTick = 0;
     player.vx = 0;
     player.vy = 0;
 
@@ -188,9 +287,12 @@ export class ArenaRoom extends Room<{ state: ArenaState; input: FightInput }> {
   }
 
   private respawnFighter(player: Player) {
-    respawnBody(player, player.slot); // also clears `frozen`
+    respawnBody(player, player.slot); // also clears `frozen` and `stunned`
     player.deadUntilTick = 0;
     player.attackUntilTick = 0;
+    player.stunUntilTick = 0;
+    // Damage is per-life: you come back fresh and hard to launch again.
+    player.damage = 0;
     player.invulnUntilTick = this.state.tick + msToTicks(SPAWN_IFRAME_MS);
   }
 
@@ -229,6 +331,8 @@ export class ArenaRoom extends Room<{ state: ArenaState; input: FightInput }> {
       player.deadUntilTick = 0;
       player.invulnUntilTick = 0;
       player.attackUntilTick = 0;
+      player.stunUntilTick = 0;
+      player.damage = 0;
       respawnBody(player, player.slot);
       player.frozen = true; // held at spawn while "3 · 2 · 1" runs
     }

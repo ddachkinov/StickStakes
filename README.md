@@ -3,8 +3,9 @@
 A stickman brawler for settling who pays. See [`PLAN.md`](./PLAN.md) for the
 product; this file is the state of the code.
 
-**Done so far:** the monorepo and netcode (step 1), and the core match loop
-(Track A) — rounds, lives, elimination, and the between-round screens.
+**Done so far:** the monorepo and netcode (step 1), the core match loop
+(Track A) — rounds, lives, elimination, between-round screens — and combat
+(Track B) — hitboxes, damage-scaled knockback and hitstun.
 
 ## Repo shape
 
@@ -99,6 +100,26 @@ per-tick timer messages.
 `frozen` is a synced field on each player that both the server step and the
 client reconciler honour, so a countdown or a death freezes prediction in
 lock-step with the server instead of rubber-banding against it.
+
+## Combat
+
+No health bars — you die by leaving the arena. Damage is purely a **knockback
+multiplier**: launch speed is \`KNOCKBACK_BASE + damage × KNOCKBACK_SCALING\`, so
+a fresh stickman barely budges and one at 120% flies off the map. That is what
+makes a comeback possible, and what makes "he's at 140, don't let him touch you"
+a real thing to shout across a table. Damage resets on every respawn.
+
+A swing runs **startup → active → recovery**; only the active frames carry a
+hitbox, so an attack is a commitment rather than a free button. A hit deals
+damage, launches the target away from the attacker, and applies hitstun.
+
+Hitstun is a synced \`stunned\` flag distinct from \`frozen\`: it takes the controls
+away but leaves physics running, so you keep flying along the arc the hit gave
+you. Because both sides honour it inside \`stepBody\`, the client reconciler
+replays a knockback exactly as the server produced it.
+
+Each target can be hit at most once per swing, so holding the button down does
+not machine-gun damage. Fresh-spawn i-frames make you briefly unhittable.
 
 ## How the netcode fits together
 

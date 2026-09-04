@@ -149,6 +149,8 @@ async function main(): Promise<void> {
             y: Math.round(predict.value(p, "y")),
             lives: p.lives,
             wins: p.roundWins,
+            damage: p.damage,
+            stunned: p.stunned,
             frozen: p.frozen,
             dead: p.deadUntilTick > 0,
             spectating: p.spectating,
@@ -200,6 +202,8 @@ async function main(): Promise<void> {
         showLives: showLives && !player.spectating,
         swing: swingProgress(player, state.tick),
         invulnerable: player.invulnUntilTick > state.tick,
+        damage: player.damage,
+        stunned: player.stunned,
       });
     }
 

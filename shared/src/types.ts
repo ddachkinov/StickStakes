@@ -47,6 +47,12 @@ export interface PlayerBody {
    * prediction doesn't fight the freeze.
    */
   frozen: boolean;
+  /**
+   * In hitstun: input is ignored, but physics keeps running — you still fly,
+   * fall and land. Distinct from `frozen`, which stops the body dead. Synced,
+   * so the client reconciler replays a knockback the same way the server did.
+   */
+  stunned: boolean;
 }
 
 /** The scalar fields a client reconciler mirrors from server truth. */
@@ -61,4 +67,5 @@ export const BODY_FIELDS = [
   "jumpBuffer",
   "jumpHeld",
   "frozen",
+  "stunned",
 ] as const satisfies readonly (keyof PlayerBody)[];

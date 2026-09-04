@@ -102,6 +102,13 @@ body {
   letter-spacing: 1px;
 }
 
+.roster-damage {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  min-width: 2.6em;
+  text-align: right;
+}
+
 .roster-wins {
   color: #ffd166;
 }

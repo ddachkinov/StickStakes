@@ -29,6 +29,22 @@ export interface Stickman {
   swing: number;
   /** Fresh-spawn invulnerability, drawn as a flicker. */
   invulnerable: boolean;
+  /** Damage taken this life, as a percentage. Drives the knockback, not death. */
+  damage: number;
+  /** In hitstun — drawn white, so a hit reads instantly. */
+  stunned: boolean;
+}
+
+/**
+ * Damage runs white → yellow → orange → red. The colour is the warning; the
+ * number is the detail. You should be able to spot the player about to fly
+ * without reading a digit.
+ */
+function damageColor(damage: number): string {
+  if (damage >= 150) return "#ff5a5f";
+  if (damage >= 100) return "#ff9f45";
+  if (damage >= 50) return "#ffd166";
+  return "#e8ecf1";
 }
 
 function require2d(canvas: HTMLCanvasElement): CanvasRenderingContext2D {
@@ -122,9 +138,11 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     // Fresh-spawn i-frames read as a fast flicker — the universal shorthand.
     if (man.invulnerable) ctx.globalAlpha = 0.35 + 0.65 * Math.abs(Math.sin(Date.now() / 70));
 
-    ctx.strokeStyle = color;
-    ctx.fillStyle = color;
-    ctx.lineWidth = 3.2;
+    // Hitstun blanks the stickman white: you have been hit and you are not
+    // driving until it clears.
+    ctx.strokeStyle = man.stunned ? "#ffffff" : color;
+    ctx.fillStyle = man.stunned ? "#ffffff" : color;
+    ctx.lineWidth = man.stunned ? 3.8 : 3.2;
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
 
@@ -139,7 +157,8 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     const shoulderY = neckY + 5;
     if (man.swing > 0) {
       // Swing: the lead arm punches out and back over the window, the trailing
-      // arm counterweights. Track B will hang the real hitbox on this arc.
+      // arm counterweights. The server's hitbox is live across the middle of
+      // this arc, so the reach you see is roughly the reach you get.
       const reach = Math.sin(man.swing * Math.PI); // 0 → 1 → 0
       ctx.moveTo(x - facing * PLAYER_WIDTH * 0.38, shoulderY + 9);
       ctx.lineTo(x + lean * 0.5, shoulderY);
@@ -165,22 +184,44 @@ export function createRenderer(canvas: HTMLCanvasElement) {
 
     const labelY = y - PLAYER_HEIGHT - 8;
 
-    // Name tag. Your own is brighter, because finding yourself is the #1 problem.
-    ctx.save();
-    ctx.font = `${man.isSelf ? "700" : "500"} 11px ui-sans-serif, system-ui, sans-serif`;
-    ctx.textAlign = "center";
-    ctx.globalAlpha = man.isSelf ? 0.95 : 0.55;
-    ctx.fillStyle = man.isSelf ? color : "#e8ecf1";
-    ctx.fillText(man.name, x, labelY);
-    ctx.restore();
+    /** Dark halo, so labels stay legible when two players crowd together. */
+    const label = (text: string, ty: number, font: string, fill: string) => {
+      ctx.save();
+      ctx.font = font;
+      ctx.textAlign = "center";
+      ctx.lineWidth = 3;
+      ctx.lineJoin = "round";
+      ctx.strokeStyle = "rgba(14,17,22,0.85)";
+      ctx.strokeText(text, x, ty);
+      ctx.fillStyle = fill;
+      ctx.fillText(text, x, ty);
+      ctx.restore();
+    };
 
-    // Lives, as pips over the name — readable without looking away from the
-    // fight. Sits clear of the name's ascenders, which start at labelY - 11.
+    // Only your own name goes over the arena. Fighters stand on top of each
+    // other constantly, and four name tags in a scrum interleave into mush —
+    // everyone else is identified by colour, with the roster as the key.
+    if (man.isSelf) {
+      label(man.name, labelY, "700 11px ui-sans-serif, system-ui, sans-serif", color);
+    }
+
+    // Damage percentage: the number you actually read mid-fight, so it gets the
+    // weight and the colour. Sits clear of the name's ascenders (labelY - 11).
+    if (man.showLives) {
+      label(
+        `${man.damage}%`,
+        labelY - 13,
+        "700 13px ui-sans-serif, system-ui, sans-serif",
+        damageColor(man.damage),
+      );
+    }
+
+    // Lives, as pips above the damage — readable without looking away.
     if (man.showLives && man.maxLives > 0) {
       const r = 2.6;
       const gap = 7.5;
       const startX = x - ((man.maxLives - 1) * gap) / 2;
-      const pipY = labelY - 16;
+      const pipY = labelY - 29;
 
       ctx.save();
       for (let i = 0; i < man.maxLives; i++) {

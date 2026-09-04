@@ -53,6 +53,40 @@ export const ATTACK_SWING_MS = 220;
 export const ATTACK_RECOVERY_MS = 260;
 
 /**
+ * Within the swing: wind-up, then the frames that can actually connect. A
+ * startup gap is what makes an attack a commitment rather than a free button.
+ */
+export const ATTACK_STARTUP_MS = 60;
+export const ATTACK_ACTIVE_MS = 90;
+
+/** Hitbox in front of the attacker, in arena units. */
+export const ATTACK_REACH = 30;
+export const ATTACK_BOX_HEIGHT = 36;
+
+/**
+ * Damage and knockback.
+ *
+ * There are no health bars — you die by leaving the arena. Damage is purely a
+ * knockback multiplier: a fresh stickman barely budges, one at 120% flies. That
+ * is what makes a comeback possible and what makes "he's at 140, don't let him
+ * touch you" a real thing to shout across a table.
+ */
+export const HIT_DAMAGE = 9;
+export const MAX_DAMAGE = 999;
+
+/** Launch speed = base + damage × scaling, in px/s. */
+export const KNOCKBACK_BASE = 200;
+export const KNOCKBACK_SCALING = 4.2;
+/** Every hit pops you up a little, and harder hits pop higher. */
+export const KNOCKBACK_LIFT = 90;
+export const KNOCKBACK_UP_RATIO = 0.42;
+
+/** Hitstun: no control while you fly. Grows with damage, but capped. */
+export const HITSTUN_BASE_MS = 180;
+export const HITSTUN_PER_DAMAGE_MS = 1.6;
+export const HITSTUN_MAX_MS = 700;
+
+/**
  * All match timing is expressed in server ticks rather than wall-clock, so the
  * client can render every countdown from the synced `tick` field alone — no
  * clock alignment, no per-tick timer messages.

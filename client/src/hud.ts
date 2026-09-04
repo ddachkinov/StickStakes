@@ -36,6 +36,14 @@ function stars(filled: number, total: number): string {
   return "★".repeat(Math.max(0, filled)) + "☆".repeat(Math.max(0, total - filled));
 }
 
+/** Same ramp the canvas uses over each stickman's head — one visual language. */
+function damageColor(damage: number): string {
+  if (damage >= 150) return "#ff5a5f";
+  if (damage >= 100) return "#ff9f45";
+  if (damage >= 50) return "#ffd166";
+  return "#e8ecf1";
+}
+
 export function createHud(root: ParentNode = document): Hud {
   const rosterEl = root.querySelector<HTMLUListElement>("#roster")!;
   const bannerEl = root.querySelector<HTMLElement>("#banner")!;
@@ -148,7 +156,7 @@ export function createHud(root: ParentNode = document): Hud {
 
     // Cheap change detection: rebuild only when something visible moved.
     const key = entries
-      .map(([id, p]) => `${id}:${p.name}:${p.lives}:${p.roundWins}:${p.spectating}`)
+      .map(([id, p]) => `${id}:${p.name}:${p.lives}:${p.roundWins}:${p.spectating}:${p.damage}`)
       .join("|") + `|${phase}|${state.hostId}`;
     if (key === lastRosterKey) return;
     lastRosterKey = key;
@@ -185,6 +193,16 @@ export function createHud(root: ParentNode = document): Hud {
             ? "spectating"
             : pips(player.lives, state.livesPerRound);
           li.append(lives);
+
+          if (!player.spectating) {
+            // Damage is the knockback multiplier, so the colour is the warning:
+            // you should be able to spot who is about to fly without reading it.
+            const damage = document.createElement("span");
+            damage.className = "roster-damage";
+            damage.style.color = damageColor(player.damage);
+            damage.textContent = `${player.damage}%`;
+            li.append(damage);
+          }
 
           const wins = document.createElement("span");
           wins.className = "roster-wins";

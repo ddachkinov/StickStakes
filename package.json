@@ -19,7 +19,9 @@
     "build": "npm run build:shared && npm --workspace @stickstakes/server run build && npm --workspace @stickstakes/client run build",
     "typecheck": "npm run build:shared && npm --workspace @stickstakes/server run typecheck && npm --workspace @stickstakes/client run typecheck",
     "start": "npm --workspace @stickstakes/server run start",
-    "test:match": "node test/match.mjs"
+    "test:match": "node test/match.mjs",
+    "test:combat": "node test/combat.mjs",
+    "test": "npm run test:match && npm run test:combat"
   },
   "devDependencies": {
     "concurrently": "^10.0.5",

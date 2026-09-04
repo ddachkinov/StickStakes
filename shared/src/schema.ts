@@ -49,10 +49,18 @@ export const Player = schema(
     /** Server tick until which fresh-spawn i-frames last (0 = vulnerable). */
     invulnUntilTick: t.number().default(0),
     /**
-     * Server tick the current attack swing ends on. Drives the animation for
-     * every client; Track B will hang the hitbox on the same window.
+     * Server tick the current attack swing ends on. Drives both the animation
+     * and the window during which the hitbox is live.
      */
     attackUntilTick: t.number().default(0),
+    /**
+     * Damage taken this life, as a percentage. Not health — you never die from
+     * it. It is purely the knockback multiplier: at 0% a hit nudges you, at
+     * 120% the same hit throws you off the map. Resets on every respawn.
+     */
+    damage: t.uint16().default(0),
+    /** Server tick hitstun ends on (0 = in control). */
+    stunUntilTick: t.number().default(0),
 
     // --- physics body: exactly PlayerBody, so both sides run the same step ---
     x: t.number().default(0),
@@ -65,6 +73,7 @@ export const Player = schema(
     jumpBuffer: t.uint8().default(0),
     jumpHeld: t.boolean().default(false),
     frozen: t.boolean().default(false),
+    stunned: t.boolean().default(false),
   },
   "Player",
 );
