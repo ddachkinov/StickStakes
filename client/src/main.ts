@@ -12,8 +12,12 @@ import {
 } from "@stickstakes/shared";
 import { createHud } from "./hud.js";
 import { createInput } from "./input.js";
+import { createLanding } from "./landing.js";
+import { createLobbyPanel } from "./lobby.js";
 import { createRenderer } from "./render.js";
-import { joinArena } from "./net.js";
+import { createResultPanel, shareText } from "./result.js";
+import { share } from "./share.js";
+import { createArena, describeJoinError, joinArenaByCode, type ArenaRoom } from "./net.js";
 
 // Floating devtools on the phone. Dev builds only — this is the single biggest
 // quality-of-life win for debugging with your thumbs instead of a laptop.
@@ -28,6 +32,9 @@ const fullscreenBtn = document.querySelector<HTMLButtonElement>("#fullscreen")!;
 const renderer = createRenderer(canvas);
 const input = createInput(canvas);
 const hud = createHud();
+const landing = createLanding();
+const lobby = createLobbyPanel();
+const result = createResultPanel();
 
 function relayout(): void {
   renderer.resize();
@@ -43,13 +50,9 @@ fullscreenBtn.addEventListener("click", () => {
   else void document.documentElement.requestFullscreen?.().catch(() => {});
 });
 
-/** Remembered between reloads so you keep your name across HMR reloads on a phone. */
-function playerName(): string {
-  const stored = localStorage.getItem("stickstakes:name");
-  if (stored) return stored;
-  const generated = `P${Math.floor(Math.random() * 90 + 10)}`;
-  localStorage.setItem("stickstakes:name", generated);
-  return generated;
+/** The link that gets someone straight into this room. */
+function inviteUrl(code: string): string {
+  return `${location.origin}${location.pathname}?code=${code}`;
 }
 
 /**
@@ -74,10 +77,32 @@ function swingProgress(player: Player, tick: number): number {
   return Math.min(1, Math.max(0, 1 - remaining / total));
 }
 
+/** Landing screen → a joined room. Loops until something works. */
+async function connect(): Promise<ArenaRoom> {
+  for (;;) {
+    const choice = await landing.choose();
+    try {
+      const room = choice.code
+        ? await joinArenaByCode(choice.code, choice.name)
+        : await createArena(choice.name);
+
+      // Put the code in the address bar so the host can just share the URL,
+      // and so a reload rejoins the same game instead of starting a new one.
+      history.replaceState(null, "", `?code=${room.roomId}`);
+      landing.hide();
+      return room;
+    } catch (error) {
+      landing.reject(
+        choice.code
+          ? describeJoinError(error, choice.code)
+          : `Couldn't create a game. ${error instanceof Error ? error.message : error}`,
+      );
+    }
+  }
+}
+
 async function main(): Promise<void> {
-  statusEl.textContent = "connecting…";
-  const room = await joinArena(playerName());
-  statusEl.textContent = "connected";
+  const room = await connect();
 
   /**
    * The input channel. `reliable` is right for WebSocket: every frame arrives
@@ -100,8 +125,8 @@ async function main(): Promise<void> {
    * server's truth arrives it rewinds to that truth and replays whatever is
    * still unacked — using the very same `stepBody` the server just ran.
    *
-   * `frozen` is one of the mirrored fields, so countdowns and deaths freeze the
-   * prediction in lock-step with the server instead of fighting it.
+   * `frozen` and `stunned` are mirrored fields, so countdowns, deaths and
+   * knockbacks all replay in lock-step with the server instead of fighting it.
    */
   const $ = getStateCallbacks(room);
 
@@ -121,23 +146,41 @@ async function main(): Promise<void> {
   });
 
   hud.onStart(() => room.send("startMatch"));
+  result.onPlayAgain(() => room.send("startMatch"));
+  lobby.onConfigure((change) => room.send("configure", change));
+
+  function flash(message: string): void {
+    if (!message) return;
+    statusEl.dataset.flash = message;
+    setTimeout(() => delete statusEl.dataset.flash, 2200);
+  }
+
+  lobby.onShare(async () => {
+    flash(await share(`Join my StickStakes game — code ${room.roomId}`, inviteUrl(room.roomId)));
+  });
+  result.onShare(async (text) => {
+    flash(await share(text, inviteUrl(room.roomId)));
+  });
 
   if (import.meta.env.DEV) {
     Object.assign(globalThis, {
       __ss: {
         room,
         predict,
+        code: () => room.roomId,
         start: () => room.send("startMatch"),
+        configure: (change: unknown) => room.send("configure", change),
         phase: () => room.state.phase,
-        playerCount: () => room.state.players.size,
+        stake: () => room.state.stake,
+        share: () => shareText(room.state, room.sessionId),
         match: () => ({
           phase: room.state.phase,
           round: room.state.round,
           totalRounds: room.state.totalRounds,
+          livesPerRound: room.state.livesPerRound,
+          stake: room.state.stake,
           tick: room.state.tick,
-          endsAt: room.state.phaseEndsAtTick,
           hostId: room.state.hostId,
-          lastRoundWinnerId: room.state.lastRoundWinnerId,
           matchWinnerId: room.state.matchWinnerId,
         }),
         dump: () =>
@@ -167,6 +210,7 @@ async function main(): Promise<void> {
 
   function frame(now: number): void {
     const state = room.state;
+    const phase = state.phase as MatchPhase;
 
     // One driver for the whole prediction stack. Returns how many fixed input
     // steps are due this frame — we send exactly that many, no more.
@@ -183,7 +227,7 @@ async function main(): Promise<void> {
     renderer.beginWorld();
     renderer.drawArena();
 
-    const showLives = (state.phase as MatchPhase) !== "lobby";
+    const showLives = phase !== "lobby";
 
     for (const [sessionId, player] of state.players) {
       if (!isVisible(player, state)) continue;
@@ -212,12 +256,20 @@ async function main(): Promise<void> {
 
     hud.update(state, room.sessionId);
 
+    // The lobby panel and the result card each own one phase; both stay out of
+    // the way while there is a fight to watch.
+    if (phase === "lobby") lobby.update(state, room.sessionId, room.roomId);
+    else lobby.hide();
+
+    if (phase === "matchOver") result.update(state, room.sessionId);
+    else result.hide();
+
     if (now - debugAt > 250) {
       debugAt = now;
       statusEl.textContent =
-        `${state.phase} · ${state.players.size}/${state.maxPlayers} · ` +
-        `${Math.round(room.clock.rtt())}ms rtt · ` +
-        `${inputHandle.pendingCount} in flight`;
+        statusEl.dataset.flash ??
+        `${room.roomId} · ${phase} · ${state.players.size}/${state.maxPlayers} · ` +
+          `${Math.round(room.clock.rtt())}ms · ${inputHandle.pendingCount} in flight`;
     }
 
     requestAnimationFrame(frame);
@@ -228,5 +280,5 @@ async function main(): Promise<void> {
 
 main().catch((error: unknown) => {
   console.error(error);
-  statusEl.textContent = `failed: ${error instanceof Error ? error.message : String(error)}`;
+  landing.reject(`Something broke: ${error instanceof Error ? error.message : String(error)}`);
 });

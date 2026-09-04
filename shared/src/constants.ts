@@ -13,7 +13,7 @@ export const FIXED_DT = 1 / TICK_RATE;
 export const INTERPOLATION_DELAY_MS = 100;
 
 export const ROOM_NAME = "arena";
-export const MAX_PLAYERS = 4;
+export const MAX_PLAYERS = 10;
 
 /** Below this many players the match can't start (or pauses if it drops). */
 export const MIN_PLAYERS = 2;
@@ -30,11 +30,28 @@ export const MIN_PLAYERS = 2;
  */
 export type MatchPhase = "lobby" | "countdown" | "playing" | "roundOver" | "matchOver";
 
-/** Default match rules. Track C's setup screen will let the host change these. */
+/** Default match rules. The host can change these from the lobby. */
 export const TOTAL_ROUNDS = 3;
 export const LIVES_PER_ROUND = 3;
+/** What the host is allowed to pick, so the server can validate the message. */
+export const ROUND_OPTIONS: readonly number[] = [1, 3, 5, 7];
+export const LIVES_OPTIONS: readonly number[] = [1, 2, 3, 5];
 /** Best-of: first to this many round wins takes the match. */
-export const ROUND_WINS_TO_TAKE_MATCH = Math.ceil(TOTAL_ROUNDS / 2);
+export const roundWinsToTakeMatch = (totalRounds: number): number =>
+  Math.ceil(totalRounds / 2);
+export const ROUND_WINS_TO_TAKE_MATCH = roundWinsToTakeMatch(TOTAL_ROUNDS);
+
+/**
+ * Room codes. Four characters from an alphabet with no I/O/0/1, because these
+ * get read aloud across a noisy table. 24^4 ≈ 331k combinations.
+ */
+export const ROOM_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+export const ROOM_CODE_LENGTH = 4;
+
+/** The stake is a joke tracker, never money. Kept short enough to read big. */
+export const MAX_STAKE_LENGTH = 80;
+export const MAX_NAME_LENGTH = 12;
+export const DEFAULT_STAKE = "Loser buys the winner lunch";
 
 /** Phase durations, in milliseconds. */
 export const COUNTDOWN_MS = 3000;
@@ -110,19 +127,29 @@ export interface Rect {
 
 /** One arena, one platform. Everything else is air. */
 export const PLATFORMS: readonly Rect[] = [
-  { x: 160, y: 400, width: 640, height: 28 },
+  { x: 90, y: 400, width: 780, height: 28 },
 ];
 
 /**
  * Standing positions on the platform surface, not drop points above it —
  * players are frozen at spawn during the countdown, and a stickman hovering
  * in mid-air for three seconds looks broken.
+ *
+ * Ordered so that the first few players spread to the far corners and later
+ * ones fill in between: a two-player match starts at opposite ends, not
+ * shoulder to shoulder.
  */
 export const SPAWN_POINTS: readonly { x: number; y: number }[] = [
-  { x: 260, y: 400 },
-  { x: 700, y: 400 },
-  { x: 400, y: 400 },
-  { x: 560, y: 400 },
+  { x: 150, y: 400 },
+  { x: 810, y: 400 },
+  { x: 330, y: 400 },
+  { x: 630, y: 400 },
+  { x: 240, y: 400 },
+  { x: 720, y: 400 },
+  { x: 480, y: 400 },
+  { x: 390, y: 400 },
+  { x: 570, y: 400 },
+  { x: 285, y: 400 },
 ];
 
 export const PLAYER_WIDTH = 22;
@@ -144,10 +171,20 @@ export const COYOTE_TICKS = 4;
 /** Ticks a jump press stays buffered while airborne. */
 export const JUMP_BUFFER_TICKS = 5;
 
-/** Stickman colours, handed out in join order. */
+/**
+ * Stickman colours, handed out in join order. Ten of them, ordered so the
+ * earliest joiners get the most distinguishable pairs — with ten sticks in a
+ * scrum, telling yours apart is the whole game.
+ */
 export const PLAYER_COLORS: readonly string[] = [
-  "#ff5a5f",
-  "#4cc9f0",
-  "#ffd166",
-  "#8ce99a",
+  "#ff5a5f", // red
+  "#4cc9f0", // cyan
+  "#ffd166", // yellow
+  "#8ce99a", // green
+  "#c792ea", // violet
+  "#ff9f45", // orange
+  "#f78fb3", // pink
+  "#6ee7d7", // teal
+  "#b0bec5", // slate
+  "#a3e635", // lime
 ];

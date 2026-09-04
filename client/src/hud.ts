@@ -79,13 +79,9 @@ export function createHud(root: ParentNode = document): Hud {
 
     switch (phase) {
       case "lobby":
-        round = "STICKSTAKES";
-        note =
-          count < MIN_PLAYERS
-            ? `${count}/${state.maxPlayers} · need ${MIN_PLAYERS}`
-            : `${count}/${state.maxPlayers} ready`;
+        round = `${count}/${state.maxPlayers} IN`;
+        note = count < MIN_PLAYERS ? `${MIN_PLAYERS} to fight` : "ready when you are";
         action = isHost ? (count < MIN_PLAYERS ? "Start solo" : "Start match") : "";
-        if (!isHost) note += " · waiting for host";
         break;
 
       case "countdown":
@@ -100,9 +96,13 @@ export function createHud(root: ParentNode = document): Hud {
         break;
 
       case "matchOver":
+        // The result card carries the headline AND the replay button — it
+        // covers this banner, so an action here would be unclickable.
         round = "MATCH OVER";
         note = isHost ? "" : "waiting for host";
-        action = isHost ? "Play again" : "";
+        break;
+
+      default:
         break;
     }
 
@@ -127,12 +127,10 @@ export function createHud(root: ParentNode = document): Hud {
     } else if (phase === "roundOver") {
       const winner = nameOf(state, state.lastRoundWinnerId);
       main = winner ? `${winner} WINS` : "DRAW";
-      sub = winner ? `round ${state.round}` : `round ${state.round} · nobody left standing`;
-    } else if (phase === "matchOver") {
-      const winner = nameOf(state, state.matchWinnerId);
-      main = winner ? `${winner} TAKES IT` : "DEAD HEAT";
-      sub = winner ? "loser pays" : "nobody owes anybody";
+      sub = winner ? `round ${state.round} of ${state.totalRounds}` : "nobody left standing";
     }
+    // `matchOver` is deliberately absent: the result card owns that moment,
+    // headline included, so the two never stack on top of each other.
 
     if (main !== lastBigMain) {
       lastBigMain = main;

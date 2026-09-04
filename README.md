@@ -4,8 +4,9 @@ A stickman brawler for settling who pays. See [`PLAN.md`](./PLAN.md) for the
 product; this file is the state of the code.
 
 **Done so far:** the monorepo and netcode (step 1), the core match loop
-(Track A) — rounds, lives, elimination, between-round screens — and combat
-(Track B) — hitboxes, damage-scaled knockback and hitstun.
+(Track A), combat (Track B), and the stakes layer (Track C) — room codes, the
+join screen, host setup, and an end screen that names who pays. Up to 10
+players per game.
 
 ## Repo shape
 
@@ -101,6 +102,27 @@ per-tick timer messages.
 client reconciler honour, so a countdown or a death freezes prediction in
 lock-step with the server instead of rubber-banding against it.
 
+## Getting into a game
+
+The landing screen asks for a name, then either creates a game or joins one by
+code. Creating gives you a **4-letter room code** — that's the room's actual
+Colyseus id, replaced in `onCreate` and collision-checked against the
+matchmaker, so `joinById(code)` needs no lookup table. The alphabet has no
+I/O/0/1 in it, because these get read aloud across a noisy table.
+
+The code also goes in the URL (`?code=ABCD`), so the host can share a link
+instead of dictating letters, and a reload rejoins the same game.
+
+Up to 10 players. The host — the first to join — sets rounds, lives, and the
+**stake**: free text saying what's actually riding on the match. Everyone sees
+it in the lobby, and the end screen repeats it back under the winner's name,
+with final standings, a share button, and a split-the-bill helper.
+
+That layer is a **joke tracker and nothing else**. No amounts are stored, sent
+or settled; the split helper divides a number the user types and shows the
+answer. The moment real money moves through it, it becomes a gambling product
+with the app-store and payment-services rules that implies.
+
 ## Combat
 
 No health bars — you die by leaving the arena. Damage is purely a **knockback
@@ -146,8 +168,7 @@ else.
 
 ## Not built yet
 
-Room codes and the join screen (right now every client lands in one auto-created
-arena), the colour picker, combat and knockback, weapons, the shrinking platform,
+The colour picker, combat and knockback, weapons, the shrinking platform,
 the stake text and the ledger, the PWA manifest, and deployment. The attack
 button swings but has no hitbox — Track B hangs one on the same
 `attackUntilTick` window the animation already reads. Matter.js is not a dependency yet — the

@@ -18,7 +18,24 @@ export function createClient(): Client {
 
 export type ArenaRoom = Room<unknown, ArenaState>;
 
-export async function joinArena(name: string): Promise<ArenaRoom> {
-  const client = createClient();
-  return client.joinOrCreate<ArenaState>(ROOM_NAME, { name }, ArenaState);
+/** Start a new game. The server assigns the room a 4-letter code as its id. */
+export async function createArena(name: string): Promise<ArenaRoom> {
+  return createClient().create<ArenaState>(ROOM_NAME, { name }, ArenaState);
+}
+
+/** Join an existing game by its code. */
+export async function joinArenaByCode(code: string, name: string): Promise<ArenaRoom> {
+  return createClient().joinById<ArenaState>(code, { name }, ArenaState);
+}
+
+/**
+ * Turn a join failure into something worth reading on a phone. Colyseus
+ * reports both "no such room" and "already full" through the same error type,
+ * so match on the message rather than inventing a code of our own.
+ */
+export function describeJoinError(error: unknown, code: string): string {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/not found/i.test(message)) return `No game called ${code}. Check the code?`;
+  if (/locked|full/i.test(message)) return `Game ${code} is full.`;
+  return `Couldn't join ${code}. ${message}`;
 }

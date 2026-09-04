@@ -1,4 +1,4 @@
-import { Room, type Client, logger } from "@colyseus/core";
+import { Room, matchMaker, type Client, logger } from "@colyseus/core";
 import {
   ArenaState,
   ATTACK_ACTIVE_MS,
@@ -6,6 +6,7 @@ import {
   ATTACK_STARTUP_MS,
   ATTACK_SWING_MS,
   COUNTDOWN_MS,
+  DEFAULT_STAKE,
   HITSTUN_BASE_MS,
   HITSTUN_MAX_MS,
   HITSTUN_PER_DAMAGE_MS,
@@ -15,13 +16,19 @@ import {
   KNOCKBACK_SCALING,
   KNOCKBACK_UP_RATIO,
   FightInput,
+  LIVES_OPTIONS,
   LIVES_PER_ROUND,
   MAX_DAMAGE,
+  MAX_NAME_LENGTH,
+  MAX_STAKE_LENGTH,
   MAX_PLAYERS,
   MIN_PLAYERS,
   PLAYER_COLORS,
   Player,
   RESPAWN_DELAY_MS,
+  ROOM_CODE_ALPHABET,
+  ROOM_CODE_LENGTH,
+  ROUND_OPTIONS,
   ROUND_OVER_MS,
   ROUND_WINS_TO_TAKE_MATCH,
   SPAWN_IFRAME_MS,
@@ -32,10 +39,18 @@ import {
   bodyAabb,
   msToTicks,
   overlapsRect,
+  roundWinsToTakeMatch,
   respawnBody,
   spawnBody,
   stepBody,
 } from "@stickstakes/shared";
+
+/** Host-only match setup message. Every field is validated server-side. */
+interface Configure {
+  totalRounds?: number;
+  livesPerRound?: number;
+  stake?: string;
+}
 
 /**
  * The authoritative arena, and the match state machine that runs on top of it.
@@ -75,12 +90,17 @@ export class ArenaRoom extends Room<{ state: ArenaState; input: FightInput }> {
    */
   private hitThisSwing = new Map<string, Set<string>>();
 
-  onCreate() {
+  async onCreate() {
+    // A short, speakable room code instead of Colyseus's generated id, so the
+    // host can read it across a table. Replacing `roomId` here is supported.
+    this.roomId = await this.reserveRoomCode();
+
     this.setState(new ArenaState());
     this.state.maxPlayers = MAX_PLAYERS;
     this.state.totalRounds = TOTAL_ROUNDS;
     this.state.livesPerRound = LIVES_PER_ROUND;
     this.state.roundWinsToTakeMatch = ROUND_WINS_TO_TAKE_MATCH;
+    this.state.stake = DEFAULT_STAKE;
     this.state.phase = "lobby";
 
     // Only the host can drive the match forward. Everyone else's press is a
@@ -91,6 +111,38 @@ export class ArenaRoom extends Room<{ state: ArenaState; input: FightInput }> {
       if (this.state.players.size === 0) return;
       this.resetMatch();
       this.startCountdown();
+    });
+
+    /**
+     * Host-only match setup. Everything is validated against the shared option
+     * lists rather than trusted: a hand-crafted message must not be able to set
+     * 200 lives or paste a megabyte of "stake".
+     */
+    this.onMessage("configure", (client, message: Configure) => {
+      if (client.sessionId !== this.state.hostId) return;
+      if (this.state.phase !== "lobby" && this.state.phase !== "matchOver") return;
+
+      const rounds = Number(message?.totalRounds);
+      if (ROUND_OPTIONS.includes(rounds)) {
+        this.state.totalRounds = rounds;
+        this.state.roundWinsToTakeMatch = roundWinsToTakeMatch(rounds);
+      }
+
+      const lives = Number(message?.livesPerRound);
+      if (LIVES_OPTIONS.includes(lives)) this.state.livesPerRound = lives;
+
+      if (typeof message?.stake === "string") {
+        const stake = message.stake.trim().slice(0, MAX_STAKE_LENGTH);
+        this.state.stake = stake || DEFAULT_STAKE;
+      }
+    });
+
+    /** Anyone may rename themselves, but only themselves. */
+    this.onMessage("rename", (client, message: { name?: string }) => {
+      const player = this.state.players.get(client.sessionId);
+      if (!player) return;
+      const name = String(message?.name ?? "").trim().slice(0, MAX_NAME_LENGTH);
+      if (name) player.name = name;
     });
 
     this.setFixedTimestep((ctx) => {
@@ -105,6 +157,26 @@ export class ArenaRoom extends Room<{ state: ArenaState; input: FightInput }> {
     logger.info(`[arena] room ${this.roomId} up at ${TICK_RATE}Hz`);
   }
 
+  /**
+   * Pick a room code nobody is using. Collisions are vanishingly rare at
+   * 24^4, but "vanishingly rare" across a whole evening of a busy restaurant
+   * is still a person joining a stranger's fight, so check and retry.
+   */
+  private async reserveRoomCode(): Promise<string> {
+    for (let attempt = 0; attempt < 12; attempt++) {
+      const code = Array.from(
+        { length: ROOM_CODE_LENGTH },
+        () => ROOM_CODE_ALPHABET[Math.floor(Math.random() * ROOM_CODE_ALPHABET.length)],
+      ).join("");
+
+      const taken = await matchMaker.query({ roomId: code });
+      if (taken.length === 0) return code;
+    }
+    // Astronomically unlikely; fall back to the generated id rather than fail.
+    logger.warn("[arena] could not find a free room code, keeping the default");
+    return this.roomId;
+  }
+
   // ---------------------------------------------------------------- players
 
   onJoin(client: Client, options?: { name?: string }) {
@@ -114,7 +186,7 @@ export class ArenaRoom extends Room<{ state: ArenaState; input: FightInput }> {
 
     const player = new Player({
       ...spawnBody(slot),
-      name: (options?.name ?? "").slice(0, 12) || `P${slot + 1}`,
+      name: (options?.name ?? "").trim().slice(0, MAX_NAME_LENGTH) || `P${slot + 1}`,
       color: PLAYER_COLORS[slot % PLAYER_COLORS.length]!,
       slot,
       // Spread first so these two win: `spawnBody` carries `frozen: false`.

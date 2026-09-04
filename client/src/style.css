@@ -230,3 +230,401 @@ body {
   font-size: 15px;
   line-height: 1;
 }
+
+/* ================================================================= landing */
+
+#landing {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: radial-gradient(120% 90% at 50% 0%, #1a2130 0%, var(--bg) 70%);
+  overflow-y: auto;
+}
+
+#landing[hidden] {
+  display: none;
+}
+
+#landing.is-busy {
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+#landing-card {
+  width: min(340px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  text-align: center;
+}
+
+#landing-card h1 {
+  margin: 0;
+  font-size: 30px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+#landing-card .tagline {
+  margin: 0 0 6px;
+  color: var(--dim);
+  font-size: 13px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-align: left;
+}
+
+.label {
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
+#landing input,
+#setup-stake,
+#split-total {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--ink);
+  font: 500 15px/1 inherit;
+}
+
+#landing input:focus,
+#setup-stake:focus,
+#split-total:focus {
+  outline: none;
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+button.primary,
+#landing-join,
+#result-share {
+  border: 0;
+  border-radius: 10px;
+  padding: 11px 16px;
+  background: var(--ink);
+  color: #0e1116;
+  font: 700 14px/1 inherit;
+}
+
+button.primary:active,
+#landing-join:active,
+#result-share:active {
+  transform: translateY(1px);
+}
+
+button:disabled {
+  opacity: 0.5;
+}
+
+.divider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--dim);
+  font-size: 11px;
+}
+
+.divider::before,
+.divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.join-row {
+  display: flex;
+  gap: 8px;
+}
+
+#landing-code {
+  flex: 1;
+  text-align: center;
+  font: 700 20px/1 ui-monospace, "SFMono-Regular", Consolas, monospace;
+  letter-spacing: 0.35em;
+  text-indent: 0.35em;
+  text-transform: uppercase;
+}
+
+#landing-error {
+  margin: 0;
+  min-height: 1.2em;
+  color: #ff8a8f;
+  font-size: 12px;
+}
+
+/* =================================================================== lobby */
+
+#lobby {
+  position: fixed;
+  z-index: 4;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(420px, calc(100vw - 32px));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: rgba(14, 17, 22, 0.86);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  /* The panel itself is inert; only its controls take taps. */
+  pointer-events: none;
+}
+
+#lobby[hidden] {
+  display: none;
+}
+
+#lobby button,
+#lobby input {
+  pointer-events: auto;
+}
+
+#lobby-code {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+#lobby-code-value {
+  flex: 1;
+  font: 800 30px/1 ui-monospace, "SFMono-Regular", Consolas, monospace;
+  letter-spacing: 0.22em;
+}
+
+#lobby-share {
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 999px;
+  padding: 7px 14px;
+  background: transparent;
+  color: var(--ink);
+  font: 600 12px/1 inherit;
+}
+
+#lobby-setup {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.setup-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.setup-row .label {
+  width: 4.2em;
+  flex: none;
+}
+
+.setup-stake-row {
+  align-items: stretch;
+}
+
+.chips {
+  display: flex;
+  gap: 6px;
+}
+
+.chip {
+  min-width: 34px;
+  padding: 6px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dim);
+  font: 600 13px/1 inherit;
+}
+
+.chip.is-on {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: #0e1116;
+}
+
+.chip:disabled {
+  opacity: 1;
+}
+
+.chip:disabled:not(.is-on) {
+  opacity: 0.45;
+}
+
+#lobby-hint {
+  margin: 0;
+  color: var(--dim);
+  font-size: 11px;
+}
+
+/* ================================================================== result */
+
+#result {
+  position: fixed;
+  z-index: 4;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(420px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  border-radius: 14px;
+  background: rgba(14, 17, 22, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  text-align: center;
+  pointer-events: none;
+}
+
+#result[hidden] {
+  display: none;
+}
+
+#result button,
+#result input {
+  pointer-events: auto;
+}
+
+#result-title {
+  font-size: clamp(22px, 6vw, 32px);
+  font-weight: 800;
+  line-height: 1.05;
+}
+
+#result-stake {
+  color: var(--ink);
+  font-size: 14px;
+  opacity: 0.85;
+}
+
+#result-standings {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-align: left;
+}
+
+#result-standings li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  font-size: 13px;
+}
+
+#result-standings li.is-self {
+  background: rgba(255, 255, 255, 0.12);
+  font-weight: 700;
+}
+
+.result-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.result-name {
+  flex: 1;
+}
+
+.result-wins {
+  color: var(--dim);
+  font-variant-numeric: tabular-nums;
+}
+
+#result-split {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--dim);
+}
+
+#result-split label {
+  flex: none;
+}
+
+#split-total {
+  width: 6.5em;
+  padding: 7px 9px;
+  font-size: 13px;
+}
+
+#split-out {
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+
+/* Ten players need two columns rather than a tower down the side. */
+#roster {
+  max-height: calc(100vh - 24px);
+  flex-wrap: wrap;
+  column-gap: 6px;
+}
+
+.result-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.result-actions button {
+  flex: 1;
+}
+
+#result-share {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  color: var(--ink);
+}
+
+/*
+ * Landscape phone: the viewport is short, and this is the orientation the game
+ * is actually played in. Tighten the landing card so it never needs scrolling.
+ */
+@media (max-height: 460px) {
+  #landing-card {
+    gap: 7px;
+  }
+
+  #landing-card h1 {
+    font-size: 22px;
+  }
+
+  #landing-card .tagline {
+    display: none;
+  }
+
+  #landing input,
+  button.primary,
+  #landing-join {
+    padding: 8px 12px;
+    font-size: 14px;
+  }
+
+  #landing-code {
+    font-size: 17px;
+  }
+}

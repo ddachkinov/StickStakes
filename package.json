@@ -21,7 +21,8 @@
     "start": "npm --workspace @stickstakes/server run start",
     "test:match": "node test/match.mjs",
     "test:combat": "node test/combat.mjs",
-    "test": "npm run test:match && npm run test:combat"
+    "test": "npm run test:lobby && npm run test:match && npm run test:combat",
+    "test:lobby": "node test/lobby.mjs"
   },
   "devDependencies": {
     "concurrently": "^10.0.5",

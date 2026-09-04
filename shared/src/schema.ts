@@ -1,5 +1,6 @@
 import { schema, t, type SchemaType } from "@colyseus/schema";
 import {
+  DEFAULT_STAKE,
   LIVES_PER_ROUND,
   MAX_PLAYERS,
   ROUND_WINS_TO_TAKE_MATCH,
@@ -107,6 +108,16 @@ export const ArenaState = schema(
     lastRoundWinnerId: t.string().default(""),
     /** Winner of the match (session id) once phase is matchOver, else "". */
     matchWinnerId: t.string().default(""),
+
+    /**
+     * What's riding on this match, in the host's own words.
+     *
+     * This is a joke tracker and nothing else: free text that the end screen
+     * repeats back. No amounts, no accounts, no payments — the moment real
+     * money moves through here it becomes a gambling product with the
+     * app-store and payment-services rules that implies.
+     */
+    stake: t.string().default(DEFAULT_STAKE),
   },
   "ArenaState",
 );
