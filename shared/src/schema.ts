@@ -73,6 +73,7 @@ export const Player = schema(
     coyote: t.uint8().default(0),
     jumpBuffer: t.uint8().default(0),
     jumpHeld: t.boolean().default(false),
+    jumping: t.boolean().default(false),
     frozen: t.boolean().default(false),
     stunned: t.boolean().default(false),
   },

@@ -41,6 +41,12 @@ export interface PlayerBody {
   /** Jump held on the previous tick, so a press can be distinguished from a hold. */
   jumpHeld: boolean;
   /**
+   * True while the body is rising from a jump the PLAYER asked for. Only such
+   * a rise may be cut short on release — knockback is velocity the game gave
+   * you, and cutting it would delete the pop out of every hit.
+   */
+  jumping: boolean;
+  /**
    * When true, `stepBody` holds the body perfectly still and ignores input.
    * The server sets it during countdown / round-over / while a player is dead;
    * because it's a synced field the client reconciler honours it too, so
@@ -66,6 +72,7 @@ export const BODY_FIELDS = [
   "coyote",
   "jumpBuffer",
   "jumpHeld",
+  "jumping",
   "frozen",
   "stunned",
 ] as const satisfies readonly (keyof PlayerBody)[];

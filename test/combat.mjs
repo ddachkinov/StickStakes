@@ -117,6 +117,12 @@ async function waitVulnerable() {
  * past startup + active (150ms) so a dropped input frame can't eat the press,
  * and retries a couple of times because the attacker may still be sliding from
  * closing in. A genuinely broken hitbox whiffs every attempt.
+ *
+ * Returns the damage dealt AND where both fighters stood on the last sample
+ * before it landed. Callers need that pair to judge knockback direction: a
+ * retry re-runs `closeIn`, which walks the attacker, so any position read
+ * before the call can describe the wrong side of the target by the time the
+ * hit actually connects.
  */
 async function swing(attempts = 3) {
   const before = def().damage;
@@ -125,9 +131,20 @@ async function swing(attempts = 3) {
     a.intent.attack = true;
     await sleep(200);
     a.intent.attack = false;
+
+    // Keep the previous sample: once damage appears the target has already
+    // been launched, so the tick before it is the one that describes the hit.
+    let atX = atk().x;
+    let defX = def().x;
     const t0 = Date.now();
-    while (Date.now() - t0 < 500 && def().damage === before) await sleep(15);
-    if (def().damage !== before) return def().damage - before;
+    while (Date.now() - t0 < 500 && def().damage === before) {
+      atX = atk().x;
+      defX = def().x;
+      await sleep(15);
+    }
+    if (def().damage !== before) {
+      return { dealt: def().damage - before, attackerX: atX, targetX: defX };
+    }
     // Missed: re-close and try again.
     await sleep(ATTACK_RECOVERY_MS + 60);
     try {
@@ -136,7 +153,7 @@ async function swing(attempts = 3) {
       break;
     }
   }
-  return def().damage - before;
+  return { dealt: def().damage - before, attackerX: atk().x, targetX: def().x };
 }
 
 console.log("\n=== start a match ===");
@@ -150,14 +167,13 @@ check("defender starts at 0%", def().damage === 0, `${def().damage}%`);
 
 console.log("\n=== a clean hit ===");
 await closeIn();
-const attackerX = atk().x;
-const dealt = await swing();
+const { dealt, attackerX, targetX } = await swing();
 check("hit landed", dealt === HIT_DAMAGE, `+${dealt}% (expected +${HIT_DAMAGE})`);
 check("defender is stunned", def().stunned, `stunned=${def().stunned}`);
 check(
   "knocked away from the attacker",
-  Math.sign(def().vx) === Math.sign(def().x - attackerX) && def().vx !== 0,
-  `vx=${Math.round(def().vx)} attacker@${Math.round(attackerX)} target@${Math.round(def().x)}`,
+  Math.sign(def().vx) === Math.sign(targetX - attackerX) && def().vx !== 0,
+  `vx=${Math.round(def().vx)} attacker@${Math.round(attackerX)} target@${Math.round(targetX)} at impact`,
 );
 check("popped upward", def().vy < 0, `vy=${Math.round(def().vy)}`);
 
@@ -212,7 +228,7 @@ for (let i = 0; i < 8 && def().lives > 0; i++) {
     break;
   }
   const dmgBefore = def().damage;
-  const got = await swing();
+  const { dealt: got } = await swing();
   if (got > 0) samples.push({ damage: dmgBefore + got, vx: Math.abs(def().vx) });
 }
 console.log(

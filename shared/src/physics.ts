@@ -42,6 +42,7 @@ export function spawnBody(spawnIndex: number): PlayerBody {
     coyote: 0,
     jumpBuffer: 0,
     jumpHeld: false,
+    jumping: false,
     frozen: false,
     stunned: false,
   };
@@ -57,6 +58,7 @@ export function copyBody(from: PlayerBody, into: PlayerBody): void {
   into.coyote = from.coyote;
   into.jumpBuffer = from.jumpBuffer;
   into.jumpHeld = from.jumpHeld;
+  into.jumping = from.jumping;
   into.frozen = from.frozen;
   into.stunned = from.stunned;
 }
@@ -128,13 +130,19 @@ export function stepBody(
     body.jumpBuffer = 0;
     body.coyote = 0;
     body.grounded = false;
+    body.jumping = true;
   }
-  // Short hop: let go on the way up and the rise is cut.
-  if (!cmd.jump && body.vy < 0) body.vy *= JUMP_CUT_MULTIPLIER;
+  // Short hop: let go on the way up and the rise is cut. Gated on `jumping`,
+  // because hitstun forces `cmd` neutral — without the gate every knocked-up
+  // player would be read as "released jump" and have their pop cut away on
+  // each tick until it was gone.
+  if (body.jumping && !cmd.jump && body.vy < 0) body.vy *= JUMP_CUT_MULTIPLIER;
   body.jumpHeld = cmd.jump;
 
   // --- vertical: gravity, capped ---
   body.vy = Math.min(MAX_FALL_SPEED, body.vy + GRAVITY * dt);
+  // Past the apex the jump is over; anything later is a fall or a hit.
+  if (body.vy >= 0) body.jumping = false;
 
   // --- integrate and resolve, one axis at a time ---
   body.x += body.vx * dt;

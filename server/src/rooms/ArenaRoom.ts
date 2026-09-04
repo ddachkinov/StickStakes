@@ -331,6 +331,8 @@ export class ArenaRoom extends Room<{ state: ArenaState; input: FightInput }> {
     target.vx = away * power;
     target.vy = -(KNOCKBACK_LIFT + power * KNOCKBACK_UP_RATIO);
     target.grounded = false;
+    // Hit mid-jump: the rise is the game's now, so it must not be cut short.
+    target.jumping = false;
 
     const stunMs = Math.min(
       HITSTUN_MAX_MS,
