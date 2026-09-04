@@ -70,5 +70,19 @@ session. Once you are testing with real people, deploy and use a stable URL.
 ## Status
 
 **Step 1 done** — monorepo scaffolded, Colyseus server and Vite client talking,
-stickmen moving on a shared canvas. See `README.md` for what exists and
-"Not built yet" for what is next.
+stickmen moving on a shared canvas.
+
+**Track A done** — the core loop. Rounds, lives, elimination, host-driven
+start/replay, and the between-round screens. `npm run test:match` plays a whole
+match headless and asserts the state machine.
+
+Next up, in the order that makes each one worth doing:
+
+- **Track B — combat.** Give the attack a hitbox, knockback and hitstun. The
+  swing animation and its `attackUntilTick` window already exist.
+- **Track C — the stakes layer.** Room codes, join screen, stake text, ledger,
+  shareable result. The differentiator, and it wants a fun game underneath it.
+- **Track D — ship it.** PWA install, wake-lock, a stable deployed URL.
+- **Track E — juice.** Camera shake, hit particles, sound. Folds in anywhere.
+
+See `README.md` for what exists today and "Not built yet" for the gaps.

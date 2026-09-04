@@ -1,12 +1,16 @@
 import { Predict, getStateCallbacks } from "@colyseus/sdk";
 import {
+  ATTACK_SWING_MS,
   BODY_FIELDS,
   INTERPOLATION_DELAY_MS,
+  TICK_MS,
+  type ArenaState,
   type FightInput,
+  type MatchPhase,
   type Player,
-  respawnBody,
   stepBody,
 } from "@stickstakes/shared";
+import { createHud } from "./hud.js";
 import { createInput } from "./input.js";
 import { createRenderer } from "./render.js";
 import { joinArena } from "./net.js";
@@ -23,6 +27,7 @@ const fullscreenBtn = document.querySelector<HTMLButtonElement>("#fullscreen")!;
 
 const renderer = createRenderer(canvas);
 const input = createInput(canvas);
+const hud = createHud();
 
 function relayout(): void {
   renderer.resize();
@@ -45,6 +50,28 @@ function playerName(): string {
   const generated = `P${Math.floor(Math.random() * 90 + 10)}`;
   localStorage.setItem("stickstakes:name", generated);
   return generated;
+}
+
+/**
+ * Should this stickman be on screen at all? Dead between respawns, knocked out
+ * for the round, or sitting out a match they joined late — all invisible.
+ */
+function isVisible(player: Player, state: ArenaState): boolean {
+  const phase = state.phase as MatchPhase;
+  if (phase === "lobby") return true;
+  if (player.spectating) return false;
+  if (player.deadUntilTick > 0) return false;
+  // Knocked out: hidden for the rest of the round, back at the next countdown.
+  if (player.lives === 0 && (phase === "playing" || phase === "roundOver")) return false;
+  return true;
+}
+
+/** 0..1 through the attack swing, or 0 when not swinging. */
+function swingProgress(player: Player, tick: number): number {
+  const remaining = player.attackUntilTick - tick;
+  if (remaining <= 0) return 0;
+  const total = ATTACK_SWING_MS / TICK_MS;
+  return Math.min(1, Math.max(0, 1 - remaining / total));
 }
 
 async function main(): Promise<void> {
@@ -72,32 +99,47 @@ async function main(): Promise<void> {
    * reconciler applies each input locally the moment we send it, and when the
    * server's truth arrives it rewinds to that truth and replays whatever is
    * still unacked — using the very same `stepBody` the server just ran.
+   *
+   * `frozen` is one of the mirrored fields, so countdowns and deaths freeze the
+   * prediction in lock-step with the server instead of fighting it.
    */
   const $ = getStateCallbacks(room);
-  let selfSlot = 0;
 
   $(room.state).players.onAdd((player: Player, sessionId: string) => {
     if (sessionId !== room.sessionId) return;
-    selfSlot = player.slot;
     predict.reconciler(player, {
       input: inputHandle,
       fields: BODY_FIELDS,
       step: (ctx, body, command) => {
         // Identical code path to the server's fixed step. If these two ever
         // disagree, you get rubber-banding — which is why it lives in /shared.
-        if (stepBody(body, command, ctx.dt)) respawnBody(body, selfSlot);
+        // Falling off is *not* handled here: death costs a life, and only the
+        // server gets to decide that.
+        stepBody(body, command, ctx.dt);
       },
     });
   });
 
-  // Dev-only inspection hook: pair it with eruda on the phone, or drive it
-  // from a headless browser in a test.
+  hud.onStart(() => room.send("startMatch"));
+
   if (import.meta.env.DEV) {
     Object.assign(globalThis, {
       __ss: {
         room,
         predict,
+        start: () => room.send("startMatch"),
+        phase: () => room.state.phase,
         playerCount: () => room.state.players.size,
+        match: () => ({
+          phase: room.state.phase,
+          round: room.state.round,
+          totalRounds: room.state.totalRounds,
+          tick: room.state.tick,
+          endsAt: room.state.phaseEndsAtTick,
+          hostId: room.state.hostId,
+          lastRoundWinnerId: room.state.lastRoundWinnerId,
+          matchWinnerId: room.state.matchWinnerId,
+        }),
         dump: () =>
           Array.from(room.state.players.entries()).map(([id, p]) => ({
             id,
@@ -105,7 +147,11 @@ async function main(): Promise<void> {
             self: id === room.sessionId,
             x: Math.round(predict.value(p, "x")),
             y: Math.round(predict.value(p, "y")),
-            grounded: p.grounded,
+            lives: p.lives,
+            wins: p.roundWins,
+            frozen: p.frozen,
+            dead: p.deadUntilTick > 0,
+            spectating: p.spectating,
           })),
       },
     });
@@ -118,6 +164,8 @@ async function main(): Promise<void> {
   let debugAt = 0;
 
   function frame(now: number): void {
+    const state = room.state;
+
     // One driver for the whole prediction stack. Returns how many fixed input
     // steps are due this frame — we send exactly that many, no more.
     const steps = predict.tick(now);
@@ -133,7 +181,11 @@ async function main(): Promise<void> {
     renderer.beginWorld();
     renderer.drawArena();
 
-    for (const [sessionId, player] of room.state.players) {
+    const showLives = (state.phase as MatchPhase) !== "lobby";
+
+    for (const [sessionId, player] of state.players) {
+      if (!isVisible(player, state)) continue;
+
       renderer.drawStickman({
         // The one read idiom: reconciled for us, interpolated for everyone else.
         x: predict.value(player, "x"),
@@ -143,16 +195,23 @@ async function main(): Promise<void> {
         color: player.color,
         name: player.name,
         isSelf: sessionId === room.sessionId,
+        lives: player.lives,
+        maxLives: state.livesPerRound,
+        showLives: showLives && !player.spectating,
+        swing: swingProgress(player, state.tick),
+        invulnerable: player.invulnUntilTick > state.tick,
       });
     }
 
     renderer.endWorld();
     renderer.drawControls(input.zones, input.active, input.stick);
 
+    hud.update(state, room.sessionId);
+
     if (now - debugAt > 250) {
       debugAt = now;
       statusEl.textContent =
-        `${room.state.players.size}/${room.state.maxPlayers} · ` +
+        `${state.phase} · ${state.players.size}/${state.maxPlayers} · ` +
         `${Math.round(room.clock.rtt())}ms rtt · ` +
         `${inputHandle.pendingCount} in flight`;
     }

@@ -20,6 +20,15 @@ export interface Stickman {
   color: string;
   name: string;
   isSelf: boolean;
+  /** Lives left, and the round's maximum — drawn as pips above the name. */
+  lives: number;
+  maxLives: number;
+  /** Show the pips at all (false in the lobby, where lives are meaningless). */
+  showLives: boolean;
+  /** 0..1 through the attack swing; 0 means not swinging. */
+  swing: number;
+  /** Fresh-spawn invulnerability, drawn as a flicker. */
+  invulnerable: boolean;
 }
 
 function require2d(canvas: HTMLCanvasElement): CanvasRenderingContext2D {
@@ -109,6 +118,10 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     }
 
     ctx.save();
+
+    // Fresh-spawn i-frames read as a fast flicker — the universal shorthand.
+    if (man.invulnerable) ctx.globalAlpha = 0.35 + 0.65 * Math.abs(Math.sin(Date.now() / 70));
+
     ctx.strokeStyle = color;
     ctx.fillStyle = color;
     ctx.lineWidth = 3.2;
@@ -123,11 +136,20 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     ctx.moveTo(x + lean, neckY);
     ctx.lineTo(x, hipY);
 
-    // Arms, swept toward the facing direction.
     const shoulderY = neckY + 5;
-    ctx.moveTo(x - PLAYER_WIDTH * 0.42, shoulderY + 8);
-    ctx.lineTo(x + lean * 0.5, shoulderY);
-    ctx.lineTo(x + PLAYER_WIDTH * 0.42 + lean, shoulderY + 7);
+    if (man.swing > 0) {
+      // Swing: the lead arm punches out and back over the window, the trailing
+      // arm counterweights. Track B will hang the real hitbox on this arc.
+      const reach = Math.sin(man.swing * Math.PI); // 0 → 1 → 0
+      ctx.moveTo(x - facing * PLAYER_WIDTH * 0.38, shoulderY + 9);
+      ctx.lineTo(x + lean * 0.5, shoulderY);
+      ctx.lineTo(x + facing * (PLAYER_WIDTH * 0.4 + reach * 20), shoulderY - reach * 5);
+    } else {
+      // Arms at rest, swept toward the facing direction.
+      ctx.moveTo(x - PLAYER_WIDTH * 0.42, shoulderY + 8);
+      ctx.lineTo(x + lean * 0.5, shoulderY);
+      ctx.lineTo(x + PLAYER_WIDTH * 0.42 + lean, shoulderY + 7);
+    }
 
     // Legs.
     ctx.moveTo(x - PLAYER_WIDTH * 0.34, y);
@@ -141,14 +163,40 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     ctx.fill();
     ctx.restore();
 
+    const labelY = y - PLAYER_HEIGHT - 8;
+
     // Name tag. Your own is brighter, because finding yourself is the #1 problem.
     ctx.save();
     ctx.font = `${man.isSelf ? "700" : "500"} 11px ui-sans-serif, system-ui, sans-serif`;
     ctx.textAlign = "center";
     ctx.globalAlpha = man.isSelf ? 0.95 : 0.55;
     ctx.fillStyle = man.isSelf ? color : "#e8ecf1";
-    ctx.fillText(man.name, x, y - PLAYER_HEIGHT - 8);
+    ctx.fillText(man.name, x, labelY);
     ctx.restore();
+
+    // Lives, as pips over the name — readable without looking away from the
+    // fight. Sits clear of the name's ascenders, which start at labelY - 11.
+    if (man.showLives && man.maxLives > 0) {
+      const r = 2.6;
+      const gap = 7.5;
+      const startX = x - ((man.maxLives - 1) * gap) / 2;
+      const pipY = labelY - 16;
+
+      ctx.save();
+      for (let i = 0; i < man.maxLives; i++) {
+        ctx.beginPath();
+        ctx.arc(startX + i * gap, pipY, r, 0, Math.PI * 2);
+        if (i < man.lives) {
+          ctx.fillStyle = color;
+          ctx.fill();
+        } else {
+          ctx.strokeStyle = "rgba(232,236,241,0.5)";
+          ctx.lineWidth = 1.2;
+          ctx.stroke();
+        }
+      }
+      ctx.restore();
+    }
   }
 
   /**

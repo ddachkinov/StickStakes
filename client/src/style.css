@@ -1,6 +1,11 @@
 :root {
   --bg: #0e1116;
   --ink: #e8ecf1;
+  --dim: rgba(232, 236, 241, 0.55);
+  --panel: rgba(14, 17, 22, 0.62);
+  --safe-t: max(8px, env(safe-area-inset-top));
+  --safe-l: max(10px, env(safe-area-inset-left));
+  --safe-r: max(10px, env(safe-area-inset-right));
   color-scheme: dark;
 }
 
@@ -30,20 +35,185 @@ body {
   height: 100%;
 }
 
+/* Everything above the canvas is presentation; only real buttons take taps. */
+#roster,
+#banner,
+#bigtext,
 #hud {
   position: fixed;
-  top: max(8px, env(safe-area-inset-top));
-  left: max(10px, env(safe-area-inset-left));
   pointer-events: none;
+  z-index: 2;
+}
+
+/* ------------------------------------------------------------------ roster */
+
+#roster {
+  top: var(--safe-t);
+  left: var(--safe-l);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
   font-variant-numeric: tabular-nums;
+}
+
+#roster li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px 3px 5px;
+  border-radius: 999px;
+  background: var(--panel);
+  line-height: 1;
+  transition: opacity 140ms ease;
+}
+
+/* Knocked out for the round: still listed, visibly done. */
+#roster li.is-out {
+  opacity: 0.38;
+}
+
+#roster li.is-self .roster-name {
+  font-weight: 700;
+}
+
+.roster-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.roster-name {
+  min-width: 3.2em;
+}
+
+.roster-host {
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  color: var(--dim);
+}
+
+.roster-lives,
+.roster-wins {
+  letter-spacing: 1px;
+}
+
+.roster-wins {
+  color: #ffd166;
+}
+
+/* ------------------------------------------------------------------ banner */
+
+#banner {
+  top: var(--safe-t);
+  left: 50%;
+  transform: translateX(-50%);
+  /* Above #bigtext: a long winner name must never cover the host's button. */
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: var(--panel);
   font-size: 12px;
-  opacity: 0.7;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+#banner-round {
+  font-weight: 700;
+}
+
+#banner-note {
+  color: var(--dim);
+}
+
+#banner-action {
+  /* The one thing on this layer that is actually tappable. */
+  pointer-events: auto;
+  border: 0;
+  border-radius: 999px;
+  padding: 7px 16px;
+  background: var(--ink);
+  color: #0e1116;
+  font: 700 12px/1 inherit;
+  letter-spacing: 0.04em;
+}
+
+#banner-action:active {
+  transform: translateY(1px);
+}
+
+/* ----------------------------------------------------------------- bigtext */
+
+#bigtext {
+  /* Sits below the banner band, so a two-line result can't reach the button. */
+  top: 46%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  max-width: 86vw;
+  text-align: center;
+  text-shadow: 0 2px 18px rgba(0, 0, 0, 0.75);
+}
+
+#bigtext-main {
+  font-size: clamp(26px, 8vw, 58px);
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  line-height: 1.02;
+  text-wrap: balance;
+}
+
+#bigtext-sub {
+  margin-top: 6px;
+  font-size: clamp(11px, 3vw, 15px);
+  color: var(--dim);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+/* A short pop each time the centred text changes. */
+#bigtext.pop #bigtext-main {
+  animation: pop 260ms cubic-bezier(0.2, 1.4, 0.4, 1);
+}
+
+@keyframes pop {
+  from {
+    transform: scale(0.72);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #bigtext.pop #bigtext-main {
+    animation: none;
+  }
+}
+
+/* --------------------------------------------------------------- dev + misc */
+
+#hud {
+  bottom: max(6px, env(safe-area-inset-bottom));
+  left: var(--safe-l);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.45;
 }
 
 #fullscreen {
   position: fixed;
-  top: max(6px, env(safe-area-inset-top));
-  right: max(8px, env(safe-area-inset-right));
+  z-index: 2;
+  top: var(--safe-t);
+  right: var(--safe-r);
   width: 34px;
   height: 34px;
   border: 0;

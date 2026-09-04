@@ -15,10 +15,26 @@
   </head>
   <body>
     <canvas id="stage"></canvas>
-    <div id="hud">
-      <span id="status">connecting…</span>
+
+    <!-- Roster: who's in, how many lives, how many rounds they've taken. -->
+    <ul id="roster"></ul>
+
+    <!-- Top band: round label and the host's match controls. -->
+    <div id="banner" hidden>
+      <span id="banner-round"></span>
+      <span id="banner-note"></span>
+      <button id="banner-action" type="button" hidden></button>
     </div>
+
+    <!-- Centred beat: "3 · 2 · 1 · FIGHT", the round result, the final call. -->
+    <div id="bigtext" hidden>
+      <div id="bigtext-main"></div>
+      <div id="bigtext-sub"></div>
+    </div>
+
+    <div id="hud"><span id="status">connecting…</span></div>
     <button id="fullscreen" type="button" aria-label="Fullscreen">⛶</button>
+
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

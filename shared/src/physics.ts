@@ -40,6 +40,7 @@ export function spawnBody(spawnIndex: number): PlayerBody {
     coyote: 0,
     jumpBuffer: 0,
     jumpHeld: false,
+    frozen: false,
   };
 }
 
@@ -53,6 +54,7 @@ export function copyBody(from: PlayerBody, into: PlayerBody): void {
   into.coyote = from.coyote;
   into.jumpBuffer = from.jumpBuffer;
   into.jumpHeld = from.jumpHeld;
+  into.frozen = from.frozen;
 }
 
 export function bodyAabb(body: PlayerBody): Rect {
@@ -82,6 +84,16 @@ export function stepBody(
   input: InputIntent,
   dt: number = FIXED_DT,
 ): boolean {
+  // Frozen: held perfectly still, input ignored. Same branch on both sides, so
+  // the client's prediction freezes in lock-step with the server's truth.
+  if (body.frozen) {
+    body.vx = 0;
+    body.vy = 0;
+    body.jumpBuffer = 0;
+    body.coyote = 0;
+    return false;
+  }
+
   const dir = (input.right ? 1 : 0) - (input.left ? 1 : 0);
 
   // --- horizontal: accelerate toward the target speed, else bleed off ---

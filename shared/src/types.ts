@@ -40,6 +40,13 @@ export interface PlayerBody {
   jumpBuffer: number;
   /** Jump held on the previous tick, so a press can be distinguished from a hold. */
   jumpHeld: boolean;
+  /**
+   * When true, `stepBody` holds the body perfectly still and ignores input.
+   * The server sets it during countdown / round-over / while a player is dead;
+   * because it's a synced field the client reconciler honours it too, so
+   * prediction doesn't fight the freeze.
+   */
+  frozen: boolean;
 }
 
 /** The scalar fields a client reconciler mirrors from server truth. */
@@ -53,4 +60,5 @@ export const BODY_FIELDS = [
   "coyote",
   "jumpBuffer",
   "jumpHeld",
+  "frozen",
 ] as const satisfies readonly (keyof PlayerBody)[];

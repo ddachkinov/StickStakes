@@ -3,8 +3,8 @@
 A stickman brawler for settling who pays. See [`PLAN.md`](./PLAN.md) for the
 product; this file is the state of the code.
 
-**Step 1 is done:** a Colyseus server and a Vite client talk to each other, and
-stickmen move on a shared canvas. Nothing beyond that yet.
+**Done so far:** the monorepo and netcode (step 1), and the core match loop
+(Track A) — rounds, lives, elimination, and the between-round screens.
 
 ## Repo shape
 
@@ -13,6 +13,7 @@ shared/   types, constants, the physics step BOTH sides run, and the wire schema
 server/   Colyseus room, authoritative 30Hz fixed timestep
 client/   Vite + canvas renderer + touch controls
 scripts/  cloudflared quick tunnel + QR, for testing on a phone
+test/     integration test that drives a whole match against a live server
 ```
 
 `shared/` is the load-bearing one. `stepBody()` lives there and is called by the
@@ -58,6 +59,47 @@ floating devtools console on the phone itself — no tethering to a laptop.
 Other scripts: `npm run build`, `npm run typecheck`, `npm start` (server only),
 `npm run tunnel` (tunnel alone, against an already-running client).
 
+### Testing
+
+```bash
+npm run dev          # in one terminal
+npm run test:match   # in another
+```
+
+`test/match.mjs` connects two headless clients and plays a match to completion,
+asserting the whole state machine: host-only start, countdown freeze, life loss,
+respawn, elimination, round scoring, the match winner, and replay. It exits
+non-zero on the first failure.
+
+> On Windows, Vite'''s file watcher sometimes misses a whole-file rewrite, so the
+> browser keeps serving the previous CSS or HTML. If a change appears not to
+> apply, restart the dev server rather than hunting for a bug in your code.
+
+## The match loop
+
+```
+lobby ──host starts──> countdown ──> playing ──> roundOver ─┬─> countdown
+  ^                                                          └─> matchOver
+  └──────────────────── host plays again ────────────────────────┘
+```
+
+Three rounds, three lives each, first to two rounds takes the match. Fall off and
+you lose a life, come back after ~1.2s with brief i-frames; at zero lives you sit
+out the rest of the round. The round ends when one fighter is left standing.
+
+The first player to join is the host and the only one whose start/replay button
+does anything — the server checks the session id rather than trusting the client.
+Join mid-match and you spectate until the next round. Alone in the room, a round
+never ends, which makes it a practice mode you can test on one phone.
+
+All match timing is in **server ticks**, not wall-clock: `phaseEndsAtTick` is
+compared against the synced `tick`, so countdowns need no clock alignment and no
+per-tick timer messages.
+
+`frozen` is a synced field on each player that both the server step and the
+client reconciler honour, so a countdown or a death freezes prediction in
+lock-step with the server instead of rubber-banding against it.
+
 ## How the netcode fits together
 
 One URL, one origin. The client always reaches Colyseus through a same-origin
@@ -84,9 +126,10 @@ else.
 ## Not built yet
 
 Room codes and the join screen (right now every client lands in one auto-created
-arena), the lobby and colour picker, rounds/lives, combat and knockback,
-weapons, the shrinking platform, the stake text and the ledger, the end screen,
-the PWA manifest, and deployment. Matter.js is not a dependency yet — the
+arena), the colour picker, combat and knockback, weapons, the shrinking platform,
+the stake text and the ledger, the PWA manifest, and deployment. The attack
+button swings but has no hitbox — Track B hangs one on the same
+`attackUntilTick` window the animation already reads. Matter.js is not a dependency yet — the
 character controller in `shared/src/physics.ts` is a deliberately small
 deterministic AABB stepper, which is what prediction and replay need; Matter.js
 comes in with ragdolls, where determinism matters less.
