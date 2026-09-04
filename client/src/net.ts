@@ -2,17 +2,21 @@ import { Client, type Room } from "@colyseus/sdk";
 import { ArenaState, ROOM_NAME } from "@stickstakes/shared";
 
 /**
- * One URL to share, one origin to reach. In dev, Vite proxies `/colyseus`
- * to the Colyseus process; in production the same prefix is served by the
- * same host. That is what makes a Cloudflare quick-tunnel link work as-is:
- * the phone only ever learns about one hostname, over HTTPS/WSS.
+ * One URL to share, one origin to reach — which is what makes a tunnel link
+ * or a deployed URL work as-is: the phone only ever learns one hostname, over
+ * HTTPS/WSS, and there is no CORS and no mixed content.
+ *
+ * The prefix differs by build because the origin's owner does. In dev Vite
+ * owns `/` and proxies `/colyseus` to the Colyseus process. In production the
+ * game server owns `/` outright — it serves the built client itself — so
+ * matchmaking sits at the root and the prefix would be a 404.
  */
 export function createClient(): Client {
   return new Client({
     hostname: location.hostname,
     secure: location.protocol === "https:",
     port: location.port ? Number(location.port) : undefined,
-    pathname: "/colyseus",
+    pathname: import.meta.env.DEV ? "/colyseus" : "",
   });
 }
 

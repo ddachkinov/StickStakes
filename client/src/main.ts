@@ -18,6 +18,11 @@ import { createRenderer } from "./render.js";
 import { createResultPanel, shareText } from "./result.js";
 import { share } from "./share.js";
 import { createArena, describeJoinError, joinArenaByCode, type ArenaRoom } from "./net.js";
+import { createWakeLock, registerServiceWorker } from "./pwa.js";
+
+// Installable, and instant on a repeat launch from the home screen.
+registerServiceWorker();
+const wake = createWakeLock();
 
 // Floating devtools on the phone. Dev builds only — this is the single biggest
 // quality-of-life win for debugging with your thumbs instead of a laptop.
@@ -103,6 +108,10 @@ async function connect(): Promise<ArenaRoom> {
 
 async function main(): Promise<void> {
   const room = await connect();
+
+  // In a game now: keep the screen lit. Requesting it after the landing screen
+  // means it always follows a real tap, which is what browsers want to see.
+  wake.acquire();
 
   /**
    * The input channel. `reliable` is right for WebSocket: every frame arrives
@@ -203,6 +212,8 @@ async function main(): Promise<void> {
   }
 
   room.onLeave((code) => {
+    // Out of the game — let the phone sleep like a phone again.
+    wake.release();
     statusEl.textContent = `disconnected (${code})`;
   });
 

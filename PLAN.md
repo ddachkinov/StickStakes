@@ -76,13 +76,18 @@ stickmen moving on a shared canvas.
 start/replay, and the between-round screens. `npm run test:match` plays a whole
 match headless and asserts the state machine.
 
-Next up, in the order that makes each one worth doing:
+**Track B done** — combat. Hitboxes, damage-scaled knockback, hitstun.
+`npm run test:combat` asserts the numbers against a running server.
 
-- **Track B — combat.** Give the attack a hitbox, knockback and hitstun. The
-  swing animation and its `attackUntilTick` window already exist.
-- **Track C — the stakes layer.** Room codes, join screen, stake text, ledger,
-  shareable result. The differentiator, and it wants a fun game underneath it.
-- **Track D — ship it.** PWA install, wake-lock, a stable deployed URL.
+**Track C done** — the stakes layer. Room codes, join screen, stake text,
+ledger, shareable result, 10 players. `npm run test:lobby` covers the codes.
+
+**Track D done** — ship it. Installable PWA, screen wake-lock, and one
+container that serves the built client and the authoritative room on a single
+origin. `Dockerfile` + `fly.toml` are ready; `fly deploy` is the last step.
+
+Next up:
+
 - **Track E — juice.** Camera shake, hit particles, sound. Folds in anywhere.
 
 See `README.md` for what exists today and "Not built yet" for the gaps.

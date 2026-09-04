@@ -166,12 +166,54 @@ Both prediction and interpolation are read through one idiom,
 `predict.value(player, "x")` — reconciled for you, interpolated for everyone
 else.
 
+## Deploying
+
+One container is the whole game: it serves the built client at `/` and runs the
+authoritative room on the same origin, so the link you hand someone is a single
+hostname over HTTPS/WSS.
+
+```bash
+npm run build          # shared -> server -> client
+npm start              # serves client/dist AND the game on :2567
+```
+
+`npm start` is exactly what the container runs, so you can reproduce production
+locally before pushing. To deploy on Fly:
+
+```bash
+fly launch --no-deploy --copy-config   # first time; rename `app` in fly.toml
+fly deploy
+```
+
+> **Run one machine.** Rooms live in the process's memory, because Colyseus
+> defaults to `LocalPresence` + `LocalDriver`. On two machines a room created on
+> one is invisible to the other, so roughly half of all code joins fail with
+> "not found" — a bug that looks random and is miserable to chase. `fly.toml`
+> pins a single machine for this reason. Scaling past one means adding
+> `@colyseus/redis-presence` and `@colyseus/redis-driver` first.
+
+`primary_region` is set to `otp` (Bucharest), the closest Fly region to Sofia —
+region choice is the single biggest lever on RTT for a 30Hz authoritative tick.
+
+### Installing it on a phone
+
+The client is a PWA: manifest, maskable icons, and a small service worker. On a
+deployed HTTPS URL the browser will offer "Add to Home Screen", and it launches
+fullscreen in landscape with no browser chrome.
+
+The worker makes no pretence of offline play — this is a multiplayer game, it is
+useless without a network. It exists so the app is installable at all (a fetch
+handler is part of the install criteria) and so a repeat launch is instant. It
+never touches matchmaking or gameplay traffic.
+
+The screen also holds a wake-lock while you are in a game, so the phone does not
+dim mid-round, and re-takes it when you come back to the tab — browsers drop the
+lock whenever the page is hidden, and forgetting to re-acquire is the usual bug.
+
 ## Not built yet
 
-The colour picker, combat and knockback, weapons, the shrinking platform,
-the stake text and the ledger, the PWA manifest, and deployment. The attack
-button swings but has no hitbox — Track B hangs one on the same
-`attackUntilTick` window the animation already reads. Matter.js is not a dependency yet — the
+The colour picker, weapons, and the shrinking platform. No juice yet either —
+no camera shake, hit particles or sound (Track E). Matter.js is not a dependency yet — the
 character controller in `shared/src/physics.ts` is a deliberately small
 deterministic AABB stepper, which is what prediction and replay need; Matter.js
 comes in with ragdolls, where determinism matters less.
