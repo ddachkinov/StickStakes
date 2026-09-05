@@ -3,6 +3,7 @@ import {
   ATTACK_SWING_MS,
   BODY_FIELDS,
   INTERPOLATION_DELAY_MS,
+  PLAYER_HEIGHT,
   TICK_MS,
   type ArenaState,
   type FightInput,
@@ -19,10 +20,25 @@ import { createResultPanel, shareText } from "./result.js";
 import { share } from "./share.js";
 import { createArena, describeJoinError, joinArenaByCode, type ArenaRoom } from "./net.js";
 import { createWakeLock, registerServiceWorker } from "./pwa.js";
+import { createAudio } from "./audio.js";
+import { createFx } from "./fx.js";
+import { haptics } from "./haptics.js";
 
 // Installable, and instant on a repeat launch from the home screen.
 registerServiceWorker();
 const wake = createWakeLock();
+
+const audio = createAudio();
+const fx = createFx(audio);
+
+/**
+ * Browsers refuse to start an AudioContext before a real gesture, so the first
+ * touch or key anywhere is what brings sound to life. `once` per event type is
+ * enough — after that the context exists and `play()` resumes it if needed.
+ */
+for (const event of ["pointerdown", "keydown"] as const) {
+  window.addEventListener(event, () => audio.unlock(), { once: true });
+}
 
 // Floating devtools on the phone. Dev builds only — this is the single biggest
 // quality-of-life win for debugging with your thumbs instead of a laptop.
@@ -33,6 +49,21 @@ if (import.meta.env.DEV) {
 const canvas = document.querySelector<HTMLCanvasElement>("#stage")!;
 const statusEl = document.querySelector<HTMLElement>("#status")!;
 const fullscreenBtn = document.querySelector<HTMLButtonElement>("#fullscreen")!;
+const muteBtn = document.querySelector<HTMLButtonElement>("#mute")!;
+
+function paintMuteButton(): void {
+  muteBtn.textContent = audio.muted ? "🔇" : "🔊";
+  muteBtn.setAttribute("aria-pressed", String(audio.muted));
+}
+
+muteBtn.addEventListener("click", () => {
+  audio.unlock(); // the tap that mutes is also a perfectly good gesture to start on
+  audio.toggleMute();
+  paintMuteButton();
+});
+
+// Reflect the remembered choice on load, before anything can be heard.
+paintMuteButton();
 
 const renderer = createRenderer(canvas);
 const input = createInput(canvas);
@@ -139,6 +170,73 @@ async function main(): Promise<void> {
    */
   const $ = getStateCallbacks(room);
 
+  /**
+   * Landing dust needs the speed you were falling at, but by the time
+   * `grounded` flips true the server has already zeroed `vy`. So keep the last
+   * airborne velocity per player and read it back on touchdown.
+   */
+  const lastFallSpeed = new Map<string, number>();
+
+  /**
+   * Feedback is driven off decoded state rather than off our own inputs, so it
+   * fires for every fighter and only for things that really happened on the
+   * server. A local guess would flash on hits that never landed.
+   */
+  $(room.state).players.onAdd((player: Player, sessionId: string) => {
+    const mine = () => sessionId === room.sessionId;
+    const chest = () => player.y - PLAYER_HEIGHT * 0.55;
+
+    $(player).listen("damage", (value, previous) => {
+      // Fires on the initial sync and on the reset to 0 at respawn too; only a
+      // genuine increase is a hit.
+      if (previous === undefined || value <= previous) return;
+      fx.hit(player.x, chest(), Math.sign(player.vx) || player.facing, value, player.color, mine());
+    });
+
+    $(player).listen("lives", (value, previous) => {
+      if (previous === undefined || value >= previous) return;
+      fx.death(player.x, chest(), player.color, mine());
+    });
+
+    $(player).listen("attackUntilTick", (value, previous) => {
+      // 0 means the swing ended; a new non-zero tick means a fresh swing.
+      if (!value || value === previous) return;
+      fx.swing();
+    });
+
+    $(player).listen("jumping", (value, previous) => {
+      if (value && !previous) fx.jump();
+    });
+
+    $(player).listen("grounded", (value, previous) => {
+      if (!value || previous) return;
+      fx.land(player.x, player.y, lastFallSpeed.get(sessionId) ?? 0);
+      lastFallSpeed.set(sessionId, 0);
+    });
+
+    $(player).listen("vy", (value) => {
+      if (value > 0) lastFallSpeed.set(sessionId, value);
+    });
+  });
+
+  $(room.state).players.onRemove((_player: Player, sessionId: string) => {
+    lastFallSpeed.delete(sessionId);
+  });
+
+  /** Round and match transitions: the punctuation of the whole thing. */
+  $(room.state).listen("phase", (value, previous) => {
+    if (previous === undefined || value === previous) return;
+    const won = room.state.matchWinnerId === room.sessionId;
+    if (value === "playing") {
+      fx.clear(); // no sparks from last round hanging over this one
+      fx.roundStart();
+    } else if (value === "roundOver") {
+      fx.roundEnd(won);
+    } else if (value === "matchOver") {
+      fx.matchOver(won);
+    }
+  });
+
   $(room.state).players.onAdd((player: Player, sessionId: string) => {
     if (sessionId !== room.sessionId) return;
     predict.reconciler(player, {
@@ -176,6 +274,14 @@ async function main(): Promise<void> {
       __ss: {
         room,
         predict,
+        fx,
+        audio,
+        feel: () => ({
+          ...fx.stats,
+          particles: fx.particles.length,
+          shakeX: Number(fx.shakeX.toFixed(2)),
+          muted: audio.muted,
+        }),
         code: () => room.roomId,
         start: () => room.send("startMatch"),
         configure: (change: unknown) => room.send("configure", change),
@@ -212,16 +318,25 @@ async function main(): Promise<void> {
   }
 
   room.onLeave((code) => {
-    // Out of the game — let the phone sleep like a phone again.
+    // Out of the game — let the phone sleep like a phone again, and never
+    // leave a vibration pattern running after the connection drops.
     wake.release();
+    haptics.stop();
     statusEl.textContent = `disconnected (${code})`;
   });
 
   let debugAt = 0;
+  let lastFrame = performance.now();
 
   function frame(now: number): void {
     const state = room.state;
     const phase = state.phase as MatchPhase;
+
+    // Real elapsed seconds, clamped: a backgrounded tab comes back with a huge
+    // delta, and letting that reach the particles would teleport them.
+    const dt = Math.min(0.05, Math.max(0, (now - lastFrame) / 1000));
+    lastFrame = now;
+    fx.update(dt);
 
     // One driver for the whole prediction stack. Returns how many fixed input
     // steps are due this frame — we send exactly that many, no more.
@@ -235,7 +350,7 @@ async function main(): Promise<void> {
     }
 
     renderer.clear();
-    renderer.beginWorld();
+    renderer.beginWorld(fx.shakeX, fx.shakeY);
     renderer.drawArena();
 
     const showLives = phase !== "lobby";
@@ -261,6 +376,10 @@ async function main(): Promise<void> {
         stunned: player.stunned,
       });
     }
+
+    // Sparks over the arena but under the fighters would be invisible behind
+    // them at the moment of impact, so they go on top.
+    renderer.drawParticles(fx.particles);
 
     renderer.endWorld();
     renderer.drawControls(input.zones, input.active, input.stick);

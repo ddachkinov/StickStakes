@@ -216,7 +216,8 @@ body {
   opacity: 0.45;
 }
 
-#fullscreen {
+#fullscreen,
+#mute {
   position: fixed;
   z-index: 2;
   top: var(--safe-t);
@@ -229,6 +230,15 @@ body {
   color: var(--ink);
   font-size: 15px;
   line-height: 1;
+}
+
+/* Sits just inboard of the fullscreen button, sharing its safe-area inset. */
+#mute {
+  right: calc(var(--safe-r) + 40px);
+}
+
+#mute[aria-pressed="true"] {
+  opacity: 0.45;
 }
 
 /* ================================================================= landing */

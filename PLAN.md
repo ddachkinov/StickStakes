@@ -86,8 +86,13 @@ ledger, shareable result, 10 players. `npm run test:lobby` covers the codes.
 container that serves the built client and the authoritative room on a single
 origin. `Dockerfile` + `fly.toml` are ready; `fly deploy` is the last step.
 
-Next up:
+**Track E done** — juice. Trauma-based camera shake, hit sparks and landing
+dust, synthesised audio with a sample-swap slot, and vibration for the things
+that happen to you. `npm run test:feel` drives a real fight in front of a real
+browser and asserts the feedback actually fired.
 
-- **Track E — juice.** Camera shake, hit particles, sound. Folds in anywhere.
+That is the MVP. What is left is the stuff you only find out by playing it with
+bored people at a table: tuning, weapons, the shrinking platform, a colour
+picker.
 
 See `README.md` for what exists today and "Not built yet" for the gaps.

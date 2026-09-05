@@ -6,6 +6,7 @@ import {
   PLAYER_WIDTH,
 } from "@stickstakes/shared";
 import { STICK_MAX_OFFSET, type ControlZone, type StickState } from "./input.js";
+import type { Particle } from "./fx.js";
 
 /**
  * Canvas renderer. The arena is a fixed 960x540 world that gets letterboxed
@@ -81,10 +82,16 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     return;
   }
 
-  /** Everything drawn between `beginWorld` and `endWorld` is in arena units. */
-  function beginWorld(): void {
+  /**
+   * Everything drawn between `beginWorld` and `endWorld` is in arena units.
+   *
+   * Screen shake is applied here, in SCREEN pixels rather than arena units, so
+   * a hit kicks the camera the same visible distance on a phone as on a laptop
+   * instead of scaling with the letterbox.
+   */
+  function beginWorld(shakeX = 0, shakeY = 0): void {
     ctx.save();
-    ctx.translate(offsetX, offsetY);
+    ctx.translate(offsetX + shakeX, offsetY + shakeY);
     ctx.scale(scale, scale);
   }
 
@@ -112,6 +119,18 @@ export function createRenderer(canvas: HTMLCanvasElement) {
       ctx.fillStyle = "#3d4a5c";
       ctx.fillRect(platform.x, platform.y, platform.width, 4);
     }
+  }
+
+  /** Sparks and dust, in world space — call between beginWorld and endWorld. */
+  function drawParticles(particles: readonly Particle[]): void {
+    ctx.save();
+    for (const p of particles) {
+      // Fade out over the tail of the life, so nothing pops out of existence.
+      ctx.globalAlpha = Math.min(1, (p.life / p.maxLife) * 1.6);
+      ctx.fillStyle = p.color;
+      ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
+    }
+    ctx.restore();
   }
 
   function drawStickman(man: Stickman): void {
@@ -310,6 +329,7 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     beginWorld,
     endWorld,
     drawArena,
+    drawParticles,
     drawStickman,
     drawControls,
     get cssWidth() {

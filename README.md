@@ -33,8 +33,7 @@ npm run dev            # shared (tsc --watch) + server :2567 + client :5173
 ```
 
 Open <http://localhost:5173> in two tabs and you have two stickmen. Keyboard:
-arrows or WASD to move, space to jump, J to attack (attack is wired end-to-end
-but does nothing yet).
+arrows or WASD to move, space to jump, J to attack.
 
 On touch, the left half of the screen is a floating stick: put a thumb down
 anywhere in it and that spot becomes the origin, then drag right or left to run.
@@ -63,15 +62,38 @@ Other scripts: `npm run build`, `npm run typecheck`, `npm start` (server only),
 
 ### Testing
 
+Every suite runs against a RUNNING server, because the things worth asserting
+here are the ones that only exist once two clients and an authoritative tick are
+talking to each other.
+
 ```bash
-npm run dev          # in one terminal
-npm run test:match   # in another
+npm run dev    # in one terminal
+npm test       # in another — lobby, match, combat, feel
 ```
 
-`test/match.mjs` connects two headless clients and plays a match to completion,
-asserting the whole state machine: host-only start, countdown freeze, life loss,
-respawn, elimination, round scoring, the match winner, and replay. It exits
-non-zero on the first failure.
+- **`test:lobby`** — room codes are short and unique, joining by code lands you
+  in the right room, a bad code fails cleanly, the room fills to exactly
+  `MAX_PLAYERS`, and `configure` is host-only and validated.
+- **`test:match`** — plays a whole match to completion and asserts the state
+  machine: host-only start, countdown freeze, life loss, respawn, elimination,
+  round scoring, the match winner, and replay.
+- **`test:combat`** — damage accrual, knockback direction and scaling against
+  the formula, hitstun, one hit per swing, i-frames, and death by knockback.
+- **`test:feel`** — drives a real fight in front of a real headless browser and
+  asserts the *feedback* fired: hits counted, sparks spawned, the camera
+  actually moved, audio unlocked, mute remembered. Feedback has no server-side
+  truth to check against, so this is the only honest way to test it.
+
+Each exits non-zero on the first failed expectation, so CI can gate on them.
+
+`test:feel` needs a Chromium. It uses `playwright-core`, which ships no browser,
+so nobody pays a 500MB download just to run the game — it finds an installed
+Chrome or Edge automatically, or you can point `CHROME_PATH` at one. Without a
+browser it SKIPS rather than fails; set `FEEL_REQUIRE_BROWSER=1` in CI to make a
+missing browser an error instead.
+
+Point any suite at a different server with `SERVER_URL` — useful for running the
+whole thing against a production build (`npm start`) rather than the dev stack.
 
 > On Windows, Vite'''s file watcher sometimes misses a whole-file rewrite, so the
 > browser keeps serving the previous CSS or HTML. If a change appears not to
@@ -166,6 +188,37 @@ Both prediction and interpolation are read through one idiom,
 `predict.value(player, "x")` — reconciled for you, interpolated for everyone
 else.
 
+## Feel
+
+Presentation only — none of this touches the simulation, and deleting all of it
+would leave a game that plays identically.
+
+- **Screen shake** is trauma-based: the offset is trauma *squared*, so a heavy
+  hit reads as far more than twice a light one. The squaring is a calibration
+  trap, though — trauma below ~0.5 lands under a pixel, present in the numbers
+  and invisible on the glass. The values in `client/src/fx.ts` are chosen from
+  the pixels they produce, and `test:feel` asserts a hit moves the camera more
+  than 3px rather than merely "not zero".
+- **Particles** are pooled and capped, so a four-player brawl degrades by
+  dropping the oldest spark instead of dropping frames. Hit sparks fly along the
+  knockback arc; landing raises dust only on a real drop.
+- **`prefers-reduced-motion`** removes shake entirely and cuts particles to a
+  third. Sound and vibration are unaffected — that preference is about motion.
+- **Vibration** fires only for things that happened to *you*. Buzzing on every
+  remote hit turns a four-player fight into a permanently rattling phone.
+  Android honours it; iOS Safari ignores it silently, so it degrades to nothing.
+
+### Sound, and swapping in real recordings
+
+Every cue is synthesised from oscillators and noise in `client/src/audio.ts`, so
+the game ships with audio, zero asset bytes and no licences. That is a
+placeholder, not a destination: drop a file into `client/public/sounds/` and name
+it in that folder's `index.json` and it replaces the synth for that cue, with no
+change to any calling code. See `client/public/sounds/README.md`.
+
+Audio cannot start until the browser has seen a real gesture, so the first tap
+or keypress unlocks it. The 🔊 button mutes, and remembers.
+
 ## Deploying
 
 One container is the whole game: it serves the built client at `/` and runs the
@@ -212,8 +265,7 @@ lock whenever the page is hidden, and forgetting to re-acquire is the usual bug.
 
 ## Not built yet
 
-The colour picker, weapons, and the shrinking platform. No juice yet either —
-no camera shake, hit particles or sound (Track E). Matter.js is not a dependency yet — the
+The colour picker, weapons, and the shrinking platform. Matter.js is not a dependency yet — the
 character controller in `shared/src/physics.ts` is a deliberately small
 deterministic AABB stepper, which is what prediction and replay need; Matter.js
 comes in with ragdolls, where determinism matters less.
