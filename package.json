@@ -1,6 +1,7 @@
 {
   "name": "stickstakes",
   "private": true,
+  "license": "MIT",
   "version": "0.0.0",
   "type": "module",
   "workspaces": [
@@ -22,19 +23,16 @@
     "test:match": "node test/match.mjs",
     "test:combat": "node test/combat.mjs",
     "test:maps": "node test/maps.mjs",
-    "test": "npm run test:maps && npm run test:lobby && npm run test:match && npm run test:combat && npm run test:feel",
     "test:lobby": "node test/lobby.mjs",
-    "test:feel": "node test/feel.mjs"
+    "test:feel": "node test/feel.mjs",
+    "test": "npm run test:maps && npm run test:lobby && npm run test:match && npm run test:combat && npm run test:feel",
+    "deploy": "node scripts/deploy-remote.mjs",
+    "logs": "ssh gp 'pm2 logs stickstakes'"
   },
   "devDependencies": {
     "concurrently": "^10.0.5",
     "playwright-core": "^1.63.0",
     "qrcode-terminal": "^0.12.0",
     "typescript": "^5.9.3"
-  },
-  "allowScripts": {
-    "esbuild@0.28.2": true,
-    "msgpackr-extract@3.0.4": true,
-    "fsevents@2.3.3": true
   }
 }

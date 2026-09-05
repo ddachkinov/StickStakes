@@ -1,12 +1,20 @@
 # StickStakes
 
-A stickman brawler for settling who pays. See [`PLAN.md`](./PLAN.md) for the
-product; this file is the state of the code.
+A stickman brawler for settling who pays. Somebody loses, and the scoreboard
+says who is buying lunch. Play it at <https://play.groundpoint.net>.
 
-**Done so far:** the monorepo and netcode (step 1), the core match loop
-(Track A), combat (Track B), and the stakes layer (Track C) — room codes, the
-join screen, host setup, and an end screen that names who pays. Up to 10
-players per game.
+Up to 10 players from a four-letter room code, on whatever phones are already
+on the table. See [`PLAN.md`](./PLAN.md) for the product idea; this file is the
+state of the code.
+
+**Want to hack on it?** [`CONTRIBUTING.md`](./CONTRIBUTING.md) is the short
+version: clone, `npm install`, `npm run dev`, open two tabs. No database, no
+API keys, no Docker — Node 22 and nothing else.
+
+> It is a joke tracker, not a betting app. No payments, no wallets, no money
+> moves anywhere. The stake is free text and the result is a scoreboard.
+
+MIT licensed — see [`LICENSE`](./LICENSE).
 
 ## Repo shape
 
@@ -14,8 +22,8 @@ players per game.
 shared/   types, constants, the physics step BOTH sides run, and the wire schema
 server/   Colyseus room, authoritative 30Hz fixed timestep
 client/   Vite + canvas renderer + touch controls
-scripts/  cloudflared quick tunnel + QR, for testing on a phone
-test/     integration test that drives a whole match against a live server
+scripts/  dev tunnel + QR for phone testing, and the maintainer deploy script
+test/     integration suites that run against a live server
 ```
 
 `shared/` is the load-bearing one. `stepBody()` lives there and is called by the
@@ -75,7 +83,6 @@ npm test       # in another — maps, lobby, match, combat, feel
   physics step through simulated jumps between every platform of every shipped
   map and asserts each solid is reachable from the spawn points, so a map can
   never ship with a tier hung higher than a jump can carry you.
-
 - **`test:lobby`** — room codes are short and unique, joining by code lands you
   in the right room, a bad code fails cleanly, the room fills to exactly
   `MAX_PLAYERS`, `configure` is host-only and validated, and the wardrobe
@@ -91,7 +98,10 @@ npm test       # in another — maps, lobby, match, combat, feel
   actually moved, audio unlocked, mute remembered. Feedback has no server-side
   truth to check against, so this is the only honest way to test it.
 
-Each exits non-zero on the first failed expectation, so CI can gate on them.
+Each exits non-zero on the first failed expectation. They all run in CI on every
+pull request (`.github/workflows/ci.yml`), alongside typecheck and a production
+build — so a contributor gets feedback without waiting on a review, and `main`
+can require the checks to pass before a merge.
 
 `test:feel` needs a Chromium. It uses `playwright-core`, which ships no browser,
 so nobody pays a 500MB download just to run the game — it finds an installed
@@ -237,23 +247,62 @@ npm run build          # shared -> server -> client
 npm start              # serves client/dist AND the game on :2567
 ```
 
-`npm start` is exactly what the container runs, so you can reproduce production
-locally before pushing. To deploy on Fly:
+`npm start` is exactly what the server runs, so you can reproduce production
+locally before pushing.
+
+> **One process. Not negotiable.** Rooms live in the process's memory, because
+> Colyseus defaults to `LocalPresence` + `LocalDriver`. Run two and a room
+> created by one is invisible to the other, so roughly half of all code joins
+> fail with "not found" — a bug that looks random and is miserable to chase.
+> This is why `ecosystem.config.cjs` pins `exec_mode: "fork"` with
+> `instances: 1`; pm2's cluster mode would break the game outright. Scaling past
+> one process means adding `@colyseus/redis-presence` and
+> `@colyseus/redis-driver` first.
+
+### The VPS (play.groundpoint.net)
+
+nginx terminates TLS and proxies everything to the Node process on
+`127.0.0.1:2567`, which serves both the built client and the game.
 
 ```bash
-fly launch --no-deploy --copy-config   # first time; rename `app` in fly.toml
-fly deploy
+npm run deploy   # push main, then run /srv/stickstakes/deploy.sh over ssh
+npm run logs     # tail pm2 logs
 ```
 
-> **Run one machine.** Rooms live in the process's memory, because Colyseus
-> defaults to `LocalPresence` + `LocalDriver`. On two machines a room created on
-> one is invisible to the other, so roughly half of all code joins fail with
-> "not found" — a bug that looks random and is miserable to chase. `fly.toml`
-> pins a single machine for this reason. Scaling past one means adding
-> `@colyseus/redis-presence` and `@colyseus/redis-driver` first.
+**Both are maintainer-only.** They need an SSH host alias `gp` that only the
+maintainer has; `npm run deploy` checks for it and exits with an explanation
+rather than a wall of ssh errors, and refuses to run from a branch other than
+`main` (the VPS pulls `main` with `--ff-only`, so deploying a side branch would
+be a no-op at best). Contributors deploy nothing — merged pull requests go live
+when the maintainer deploys.
 
-`primary_region` is set to `otp` (Bucharest), the closest Fly region to Sofia —
-region choice is the single biggest lever on RTT for a 30Hz authoritative tick.
+`deploy.sh` pulls, installs, builds and `pm2 reload`s. It runs
+`npm ci --include=dev` on purpose: the build needs `typescript` and `vite`,
+which are devDependencies, and a plain `npm ci` skips them whenever
+`NODE_ENV=production` is set in the environment — failing later with a
+confusing `tsc: not found`.
+
+**Every deploy ends the games in progress.** `pm2 reload` restarts the process
+and rooms are in-memory, so players are dropped with close code 4001
+(`SERVER_SHUTDOWN`). The client catches exactly that code and says the server
+restarted, rather than offering a reconnect that could not work. Deploy between
+matches, not during one.
+
+nginx must proxy `/` as a whole with WebSocket upgrade headers — a narrower
+`location` will not do. The game's socket opens at `/<processId>/<roomId>`,
+both of which are assigned at runtime, so there is no fixed path to match on.
+
+**No secrets or env vars are needed.** The app reads only `PORT` (default 2567)
+and `NODE_ENV`, both set in `ecosystem.config.cjs`. There is no database, no API
+key and no `.env`.
+
+### Fly.io (alternative)
+
+`Dockerfile` and `fly.toml` are still in the repo and still work if you would
+rather run it as a container — `fly deploy`. The same one-process rule applies,
+and `fly.toml` pins a single machine for it. `primary_region` is `otp`
+(Bucharest), the closest region to Sofia; region choice is the single biggest
+lever on RTT for a 30Hz authoritative tick.
 
 ### Installing it on a phone
 

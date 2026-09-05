@@ -22,9 +22,13 @@ const PAGE_URL = process.env.CLIENT_URL ?? "http://localhost:5173/";
 const TICK_MS = 1000 / 30;
 
 /**
- * `playwright-core` deliberately ships no browser, so nobody pays a 500MB
- * download just to run the game. Point CHROME_PATH at a binary, or let this
- * find the Chrome/Edge that is almost certainly already installed.
+ * `playwright-core` deliberately ships no browser, so nobody pays a ~500MB
+ * download just to run the game. Two ways to give it one:
+ *
+ *   - an installed Chrome/Edge, found below or named by CHROME_PATH;
+ *   - a browser playwright downloaded itself
+ *     (`npx playwright-core install chromium`), which is how CI gets one —
+ *     in that case we pass no executablePath and let it find its own.
  */
 function findBrowser() {
   const candidates = [
@@ -41,17 +45,25 @@ function findBrowser() {
   return candidates.find((path) => path && existsSync(path));
 }
 
-const CHROME = findBrowser();
-if (!CHROME) {
-  const message =
-    "no Chrome/Chromium found — set CHROME_PATH to run the feel test";
-  if (process.env.FEEL_REQUIRE_BROWSER === "1") {
-    console.error(`\nFAIL: ${message}\n`);
-    process.exit(1);
+async function launchBrowser() {
+  const explicit = findBrowser();
+  try {
+    return await chromium.launch(explicit ? { executablePath: explicit } : {});
+  } catch (error) {
+    const message =
+      "no browser available — install Chrome, set CHROME_PATH, or run " +
+      "`npx playwright-core install chromium`";
+    // CI sets FEEL_REQUIRE_BROWSER so a missing browser is a loud failure
+    // rather than a green run that quietly tested nothing.
+    if (process.env.FEEL_REQUIRE_BROWSER === "1") {
+      console.error(`\nFAIL: ${message}\n${error.message}\n`);
+      process.exit(1);
+    }
+    console.log(`\nSKIPPED: ${message}\n`);
+    process.exit(0);
   }
-  console.log(`\nSKIPPED: ${message}\n`);
-  process.exit(0);
 }
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 let failures = 0;
@@ -61,7 +73,7 @@ const check = (label, ok, detail = "") => {
 };
 
 // --- the watching client: a real browser running the real renderer ----------
-const browser = await chromium.launch({ executablePath: CHROME });
+const browser = await launchBrowser();
 const context = await browser.newContext({
   viewport: { width: 812, height: 375 },
   deviceScaleFactor: 2,
@@ -77,11 +89,38 @@ page.on("console", (m) => {
 
 await page.goto(PAGE_URL, { waitUntil: "domcontentloaded" });
 await page.waitForSelector("#landing-create", { timeout: 20000 });
+
 await page.fill("#landing-name", "WATCH");
 await page.click("#landing-create"); // also the gesture that unlocks audio
 await page.waitForFunction(() => location.search.includes("code="), { timeout: 20000 });
 const code = await page.evaluate(() => new URLSearchParams(location.search).get("code"));
 console.log(`\n=== watching room ${code} ===`);
+
+/*
+ * The counters this test reads live on the dev-only `__ss` hook, which is
+ * installed once a room is joined and which a production bundle strips
+ * entirely. Pointed at `npm start` there is simply nothing to assert against,
+ * so say so and skip rather than dying on an undefined read and looking like
+ * the feedback layer is broken.
+ *
+ * This check has to come AFTER the room exists — the hook is not attached
+ * until then, so testing for it on the landing screen would skip every time,
+ * including on a perfectly good dev build.
+ */
+const hasDevHook = await page.evaluate(() => typeof globalThis.__ss !== "undefined");
+if (!hasDevHook) {
+  const message =
+    "no dev hook on the page — test:feel needs the dev build (npm run dev), " +
+    "not a production bundle";
+  if (process.env.FEEL_REQUIRE_BROWSER === "1") {
+    console.error(`\nFAIL: ${message}\n`);
+    await browser.close();
+    process.exit(1);
+  }
+  console.log(`\nSKIPPED: ${message}\n`);
+  await browser.close();
+  process.exit(0);
+}
 
 const feel = () => page.evaluate(() => globalThis.__ss.feel());
 check("dev feel hook is present", (await feel()) !== null);
