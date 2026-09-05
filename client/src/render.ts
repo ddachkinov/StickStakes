@@ -1,12 +1,48 @@
 import {
   ARENA_HEIGHT,
   ARENA_WIDTH,
-  PLATFORMS,
   PLAYER_HEIGHT,
   PLAYER_WIDTH,
 } from "@stickstakes/shared";
+import type {
+  Hazard,
+  ParallaxLayer,
+  ParallaxObject,
+  Solid,
+  WorldMap,
+} from "@stickstakes/shared";
 import { STICK_MAX_OFFSET, type ControlZone, type StickState } from "./input.js";
+import { drawHat } from "./figure.js";
 import type { Particle } from "./fx.js";
+
+/**
+ * Where the parallax layers are looking. `x`/`y` are the camera's offset from
+ * the arena centre — it trails your own fighter — and `t` is seconds, for the
+ * drifting and spinning bits. Every layer multiplies this by its own `depth`,
+ * so far things barely stir and foreground things race the fight.
+ */
+export interface WorldCamera {
+  x: number;
+  y: number;
+  t: number;
+}
+
+/** Tiny deterministic PRNG so a scatter field (stars, rain) doesn't shimmer. */
+function seeded(seed: number): () => number {
+  let s = (seed || 1) >>> 0;
+  return () => {
+    s = (s * 1664525 + 1013904223) >>> 0;
+    return s / 0x100000000;
+  };
+}
+
+/** Wrap a drifting x back into a band a bit wider than the arena. */
+function wrapX(x: number, pad: number): number {
+  const span = ARENA_WIDTH + pad * 2;
+  let r = (x + pad) % span;
+  if (r < 0) r += span;
+  return r - pad;
+}
 
 /**
  * Canvas renderer. The arena is a fixed 960x540 world that gets letterboxed
@@ -19,6 +55,8 @@ export interface Stickman {
   facing: number;
   grounded: boolean;
   color: string;
+  /** Wardrobe hat id — one of the ids in shared `HATS`. */
+  hat: string;
   name: string;
   isSelf: boolean;
   /** Lives left, and the round's maximum — drawn as pips above the name. */
@@ -46,6 +84,58 @@ function damageColor(damage: number): string {
   if (damage >= 100) return "#ff9f45";
   if (damage >= 50) return "#ffd166";
   return "#e8ecf1";
+}
+
+/** An upward chevron with a short stem — "jump", drawn in strokes. */
+function drawJumpIcon(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  r: number,
+  ink: string,
+): void {
+  const s = r * 0.4;
+  ctx.save();
+  ctx.strokeStyle = ink;
+  ctx.lineWidth = Math.max(2.5, r * 0.09);
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.beginPath();
+  ctx.moveTo(cx - s, cy + s * 0.35);
+  ctx.lineTo(cx, cy - s * 0.65);
+  ctx.lineTo(cx + s, cy + s * 0.35);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(cx, cy - s * 0.4);
+  ctx.lineTo(cx, cy + s);
+  ctx.stroke();
+  ctx.restore();
+}
+
+/** A sharp four-point burst — "attack", the same shape as a hit spark. */
+function drawAttackIcon(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  r: number,
+  ink: string,
+): void {
+  const outer = r * 0.52;
+  const inner = outer * 0.38;
+  ctx.save();
+  ctx.fillStyle = ink;
+  ctx.beginPath();
+  for (let i = 0; i < 8; i++) {
+    const ang = (i / 8) * Math.PI * 2 - Math.PI / 2;
+    const rad = i % 2 === 0 ? outer : inner;
+    const px = cx + Math.cos(ang) * rad;
+    const py = cy + Math.sin(ang) * rad;
+    if (i === 0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  }
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
 }
 
 function require2d(canvas: HTMLCanvasElement): CanvasRenderingContext2D {
@@ -105,20 +195,376 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     ctx.fillRect(0, 0, cssWidth, cssHeight);
   }
 
-  function drawArena(): void {
-    // Backdrop, so the playable area reads apart from the letterbox bars.
-    const sky = ctx.createLinearGradient(0, 0, 0, ARENA_HEIGHT);
-    sky.addColorStop(0, "#151b25");
-    sky.addColorStop(1, "#0f1319");
-    ctx.fillStyle = sky;
-    ctx.fillRect(0, 0, ARENA_WIDTH, ARENA_HEIGHT);
+  /** One decorative parallax object, already translated into its layer's frame. */
+  function drawShape(o: ParallaxObject, t: number): void {
+    ctx.save();
+    ctx.globalAlpha = o.alpha ?? 1;
+    ctx.fillStyle = o.color;
+    ctx.strokeStyle = o.color;
 
-    for (const platform of PLATFORMS) {
-      ctx.fillStyle = "#2b3441";
-      ctx.fillRect(platform.x, platform.y, platform.width, platform.height);
-      ctx.fillStyle = "#3d4a5c";
-      ctx.fillRect(platform.x, platform.y, platform.width, 4);
+    switch (o.shape) {
+      case "band": {
+        if (o.accent && o.accent !== o.color) {
+          const g = ctx.createLinearGradient(0, o.y, 0, o.y + o.h);
+          g.addColorStop(0, o.color);
+          g.addColorStop(1, o.accent);
+          ctx.fillStyle = g;
+        }
+        ctx.fillRect(o.x, o.y, o.w, o.h);
+        break;
+      }
+      case "moon": {
+        const r = o.w / 2;
+        const glow = ctx.createRadialGradient(o.x, o.y, r * 0.4, o.x, o.y, r * 2.4);
+        glow.addColorStop(0, o.color);
+        glow.addColorStop(1, "rgba(0,0,0,0)");
+        ctx.globalAlpha = (o.alpha ?? 1) * 0.4;
+        ctx.fillStyle = glow;
+        ctx.beginPath();
+        ctx.arc(o.x, o.y, r * 2.4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = o.alpha ?? 1;
+        ctx.fillStyle = o.color;
+        ctx.beginPath();
+        ctx.arc(o.x, o.y, r, 0, Math.PI * 2);
+        ctx.fill();
+        if (o.accent) {
+          ctx.fillStyle = o.accent;
+          ctx.globalAlpha = (o.alpha ?? 1) * 0.5;
+          ctx.beginPath();
+          ctx.arc(o.x + r * 0.35, o.y - r * 0.2, r * 0.28, 0, Math.PI * 2);
+          ctx.arc(o.x - r * 0.3, o.y + r * 0.3, r * 0.16, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        break;
+      }
+      case "mountain": {
+        ctx.beginPath();
+        ctx.moveTo(o.x - o.w / 2, o.y);
+        ctx.lineTo(o.x, o.y - o.h);
+        ctx.lineTo(o.x + o.w / 2, o.y);
+        ctx.closePath();
+        ctx.fill();
+        break;
+      }
+      case "mesa": {
+        const top = o.w * 0.55;
+        ctx.beginPath();
+        ctx.moveTo(o.x - o.w / 2, o.y);
+        ctx.lineTo(o.x - top / 2, o.y - o.h);
+        ctx.lineTo(o.x + top / 2, o.y - o.h);
+        ctx.lineTo(o.x + o.w / 2, o.y);
+        ctx.closePath();
+        ctx.fill();
+        break;
+      }
+      case "hill": {
+        ctx.beginPath();
+        ctx.moveTo(o.x - o.w / 2, o.y);
+        ctx.quadraticCurveTo(o.x, o.y - o.h * 2, o.x + o.w / 2, o.y);
+        ctx.closePath();
+        ctx.fill();
+        break;
+      }
+      case "cloud": {
+        const puffs: readonly [number, number, number][] = [
+          [-o.w * 0.3, 0, o.h * 0.6],
+          [0, -o.h * 0.2, o.h],
+          [o.w * 0.32, 0, o.h * 0.7],
+        ];
+        for (const [dx, dy, r] of puffs) {
+          ctx.beginPath();
+          ctx.arc(o.x + dx, o.y + dy, r, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        break;
+      }
+      case "tree": {
+        ctx.fillRect(o.x - o.w * 0.12, o.y - o.h, o.w * 0.24, o.h);
+        ctx.beginPath();
+        ctx.moveTo(o.x - o.w / 2, o.y - o.h * 0.5);
+        ctx.lineTo(o.x, o.y - o.h * 1.5);
+        ctx.lineTo(o.x + o.w / 2, o.y - o.h * 0.5);
+        ctx.closePath();
+        ctx.fill();
+        break;
+      }
+      case "spire": {
+        ctx.beginPath();
+        ctx.moveTo(o.x - o.w / 2, o.y);
+        ctx.lineTo(o.x - o.w * 0.12, o.y - o.h);
+        ctx.lineTo(o.x + o.w * 0.12, o.y - o.h);
+        ctx.lineTo(o.x + o.w / 2, o.y);
+        ctx.closePath();
+        ctx.fill();
+        break;
+      }
+      case "boulder": {
+        ctx.beginPath();
+        ctx.ellipse(o.x, o.y, o.w / 2, o.h / 2, 0, Math.PI, 0);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.ellipse(o.x - o.w * 0.18, o.y, o.w * 0.28, o.h * 0.42, 0, Math.PI, 0);
+        ctx.fill();
+        break;
+      }
+      case "building": {
+        ctx.fillRect(o.x - o.w / 2, o.y - o.h, o.w, o.h);
+        if (o.accent) {
+          ctx.fillStyle = o.accent;
+          for (let gy = o.y - o.h + 14; gy < o.y - 10; gy += 22) {
+            for (let gx = o.x - o.w / 2 + 10; gx < o.x + o.w / 2 - 8; gx += 18) {
+              if ((gx + gy) % 3 === 0) ctx.fillRect(gx, gy, 7, 10);
+            }
+          }
+        }
+        break;
+      }
+      case "skyline": {
+        const rnd = seeded(o.seed ?? 1);
+        let bx = o.x;
+        while (bx < o.x + o.w) {
+          const bw = 40 + rnd() * 70;
+          const bh = o.h * (0.35 + rnd() * 0.65);
+          ctx.fillStyle = o.color;
+          ctx.fillRect(bx, o.y - bh, bw - 6, bh);
+          if (o.accent && o.accent !== o.color) {
+            ctx.fillStyle = o.accent;
+            for (let wy = o.y - bh + 10; wy < o.y - 8; wy += 16) {
+              for (let wx = bx + 6; wx < bx + bw - 12; wx += 12) {
+                if (rnd() > 0.62) ctx.fillRect(wx, wy, 4, 6);
+              }
+            }
+          }
+          bx += bw;
+        }
+        break;
+      }
+      case "starfield": {
+        const rnd = seeded(o.seed ?? 1);
+        for (let i = 0; i < 90; i++) {
+          const sx = o.x + rnd() * o.w;
+          const sy = o.y + rnd() * o.h;
+          const r = rnd() * 1.4 + 0.3;
+          ctx.globalAlpha = (o.alpha ?? 1) * (0.3 + rnd() * 0.7);
+          ctx.fillRect(sx, sy, r, r);
+        }
+        break;
+      }
+      case "crane": {
+        ctx.lineWidth = 5;
+        ctx.beginPath();
+        ctx.moveTo(o.x, o.y + o.h);
+        ctx.lineTo(o.x, o.y);
+        ctx.lineTo(o.x + o.w, o.y + o.h * 0.18);
+        ctx.moveTo(o.x, o.y);
+        ctx.lineTo(o.x + o.w * 0.28, o.y - o.h * 0.12);
+        ctx.stroke();
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(o.x + o.w * 0.78, o.y + o.h * 0.12);
+        ctx.lineTo(o.x + o.w * 0.78, o.y + o.h * 0.42);
+        ctx.stroke();
+        break;
+      }
+      case "chain": {
+        ctx.lineWidth = o.w;
+        ctx.setLineDash([o.w * 1.6, o.w * 1.1]);
+        ctx.beginPath();
+        ctx.moveTo(o.x, o.y);
+        ctx.lineTo(o.x, o.y + o.h);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        break;
+      }
+      case "pipes": {
+        ctx.lineWidth = 14;
+        ctx.lineCap = "round";
+        for (let i = 0; i < 3; i++) {
+          const py = o.y + (i * o.h) / 3;
+          ctx.beginPath();
+          ctx.moveTo(o.x, py);
+          ctx.lineTo(o.x + o.w * 0.7, py);
+          ctx.lineTo(o.x + o.w, py + o.h * 0.25);
+          ctx.stroke();
+        }
+        break;
+      }
+      case "arch": {
+        ctx.beginPath();
+        ctx.moveTo(o.x - o.w / 2, o.y);
+        ctx.lineTo(o.x - o.w / 2, o.y - o.h * 0.5);
+        ctx.quadraticCurveTo(o.x, o.y - o.h * 1.4, o.x + o.w / 2, o.y - o.h * 0.5);
+        ctx.lineTo(o.x + o.w / 2, o.y);
+        ctx.closePath();
+        ctx.fill();
+        if (o.accent) {
+          ctx.globalAlpha = (o.alpha ?? 1) * 0.5;
+          ctx.fillStyle = o.accent;
+          ctx.beginPath();
+          ctx.ellipse(o.x, o.y, o.w * 0.32, o.h * 0.32, 0, Math.PI, 0);
+          ctx.fill();
+        }
+        break;
+      }
+      case "girderX": {
+        ctx.fillRect(o.x, o.y, o.w, o.h);
+        if (o.accent) {
+          ctx.fillStyle = o.accent;
+          for (let gx = o.x + 12; gx < o.x + o.w; gx += 46) {
+            ctx.beginPath();
+            ctx.moveTo(gx, o.y + 2);
+            ctx.lineTo(gx + 20, o.y + o.h - 2);
+            ctx.lineTo(gx + 40, o.y + 2);
+            ctx.stroke();
+          }
+        }
+        break;
+      }
+      case "rain": {
+        const rnd = seeded(o.seed ?? 1);
+        const fall = t * 620;
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        for (let i = 0; i < 70; i++) {
+          const rx = wrapX(o.x + rnd() * o.w + t * (o.drift ?? 0), 60);
+          const ry = (rnd() * o.h + fall) % o.h;
+          ctx.moveTo(rx, ry);
+          ctx.lineTo(rx - 3, ry + 16);
+        }
+        ctx.stroke();
+        break;
+      }
+      case "embers": {
+        const rnd = seeded(o.seed ?? 1);
+        const rise = t * 46;
+        for (let i = 0; i < 46; i++) {
+          const ex = wrapX(o.x + rnd() * o.w + Math.sin(t + i) * 12, 40);
+          const ey = (o.h - ((rnd() * o.h + rise) % o.h));
+          const r = rnd() * 1.8 + 0.6;
+          ctx.globalAlpha = (o.alpha ?? 1) * (0.4 + rnd() * 0.6);
+          ctx.beginPath();
+          ctx.arc(ex, ey, r, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        break;
+      }
     }
+    ctx.restore();
+  }
+
+  /** One parallax layer: shift by depth × camera, then draw its objects. */
+  function drawLayer(layer: ParallaxLayer, cam: WorldCamera): void {
+    ctx.save();
+    ctx.translate(-cam.x * layer.depth, -cam.y * layer.depth * 0.35);
+    for (const o of layer.objects) {
+      if (o.drift && o.shape !== "rain" && o.shape !== "embers") {
+        const saved = o.x;
+        // Non-field drifters (clouds) actually travel; field shapes handle
+        // their own motion off `t` so their scatter stays put.
+        drawShapeAt(o, saved + cam.t * o.drift, cam.t);
+      } else {
+        drawShape(o, cam.t);
+      }
+    }
+    ctx.restore();
+  }
+
+  function drawShapeAt(o: ParallaxObject, x: number, t: number): void {
+    drawShape({ ...o, x: wrapX(x, o.w + 80) }, t);
+  }
+
+  /** The map's solid geometry — platforms, beams, crates. */
+  function drawSolids(map: WorldMap): void {
+    for (const s of map.solids) {
+      const fill =
+        s.kind === "crate"
+          ? "#6b5942"
+          : s.kind === "girder"
+            ? "#4a5568"
+            : map.ink;
+      ctx.fillStyle = fill;
+      ctx.fillRect(s.x, s.y, s.width, s.height);
+
+      // A lit top face reads as "you can stand here". One-way beams get a
+      // thinner cap and a row of hangers so they look passable from below.
+      ctx.fillStyle = "rgba(255,255,255,0.12)";
+      ctx.fillRect(s.x, s.y, s.width, s.oneWay ? 2 : 4);
+
+      if (s.oneWay) {
+        ctx.strokeStyle = "rgba(255,255,255,0.10)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        for (let hx = s.x + 8; hx < s.x + s.width; hx += 22) {
+          ctx.moveTo(hx, s.y + s.height);
+          ctx.lineTo(hx, s.y + s.height + 4);
+        }
+        ctx.stroke();
+      } else if (s.kind === "crate") {
+        ctx.strokeStyle = "rgba(0,0,0,0.30)";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(s.x + 3, s.y + 3, s.width - 6, s.height - 6);
+      }
+    }
+  }
+
+  /** Kill rectangles — spikes, saw blades. Drawn; never predicted. */
+  function drawHazards(map: WorldMap, t: number): void {
+    for (const h of map.hazards) drawHazard(h, t);
+  }
+
+  function drawHazard(h: Hazard, t: number): void {
+    ctx.save();
+    if (h.kind === "spikes") {
+      ctx.fillStyle = h.color ?? "#c3ccd6";
+      const n = Math.max(1, Math.round(h.width / 16));
+      const step = h.width / n;
+      for (let i = 0; i < n; i++) {
+        ctx.beginPath();
+        ctx.moveTo(h.x + i * step, h.y + h.height);
+        ctx.lineTo(h.x + i * step + step / 2, h.y);
+        ctx.lineTo(h.x + (i + 1) * step, h.y + h.height);
+        ctx.closePath();
+        ctx.fill();
+      }
+    } else if (h.kind === "saw") {
+      const cx = h.x + h.width / 2;
+      const cy = h.y + h.height / 2;
+      const r = Math.min(h.width, h.height) / 2;
+      ctx.translate(cx, cy);
+      ctx.rotate(t * 7);
+      ctx.fillStyle = h.color ?? "#9aa4af";
+      ctx.beginPath();
+      for (let i = 0; i < 16; i++) {
+        const a = (i / 16) * Math.PI * 2;
+        const rr = i % 2 === 0 ? r : r * 0.66;
+        ctx.lineTo(Math.cos(a) * rr, Math.sin(a) * rr);
+      }
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = "#2b3441";
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 0.28, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      ctx.fillStyle = h.color ?? "rgba(255,90,95,0.45)";
+      ctx.fillRect(h.x, h.y, h.width, h.height);
+    }
+    ctx.restore();
+  }
+
+  /** Sky + background parallax + the solid stage. Call inside beginWorld. */
+  function drawWorldBack(map: WorldMap, cam: WorldCamera): void {
+    const sky = ctx.createLinearGradient(0, 0, 0, ARENA_HEIGHT);
+    sky.addColorStop(0, map.sky[0]);
+    sky.addColorStop(1, map.sky[1]);
+    ctx.fillStyle = sky;
+    ctx.fillRect(-60, -60, ARENA_WIDTH + 120, ARENA_HEIGHT + 120);
+
+    for (const layer of map.background) drawLayer(layer, cam);
+
+    drawSolids(map);
+    drawHazards(map, cam.t);
   }
 
   /** Sparks and dust, in world space — call between beginWorld and endWorld. */
@@ -199,6 +645,11 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     ctx.beginPath();
     ctx.arc(x + lean + facing * headR * 0.75, headY, 1.6, 0, Math.PI * 2);
     ctx.fill();
+
+    // Hat last, so it sits on top of the head outline. Follows the white
+    // hitstun flash with the rest of the silhouette.
+    drawHat(ctx, x + lean, headY, headR, facing, man.stunned ? "#ffffff" : color, man.hat);
+
     ctx.restore();
 
     const labelY = y - PLAYER_HEIGHT - 8;
@@ -277,16 +728,25 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     if (stick.active) {
       const dx = stick.x - stick.originX;
 
-      // The origin, ringed at exactly the distance the thumb can reach before
-      // the origin starts trailing it — so the thumb is always on or inside it.
+      // The origin, ringed (dashed) at exactly the distance the thumb can reach
+      // from this fixed spot — the thumb is always on the ring or inside it.
+      ctx.save();
+      ctx.setLineDash([3, 5]);
       ctx.beginPath();
       ctx.arc(stick.originX, stick.originY, STICK_MAX_OFFSET, 0, Math.PI * 2);
       ctx.lineWidth = 1.5;
-      ctx.strokeStyle = "rgba(255,255,255,0.16)";
+      ctx.strokeStyle = "rgba(255,255,255,0.18)";
       ctx.stroke();
+      ctx.restore();
 
-      // A bar out to the thumb, so the committed direction reads at a glance.
+      // A little pip pinning the origin itself.
+      ctx.beginPath();
+      ctx.arc(stick.originX, stick.originY, 3, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(255,255,255,0.28)";
+      ctx.fill();
+
       if (Math.abs(dx) > 1) {
+        // A bar out to the thumb, so the committed direction reads at a glance.
         ctx.beginPath();
         ctx.moveTo(stick.originX, stick.originY);
         ctx.lineTo(stick.x, stick.y);
@@ -294,31 +754,79 @@ export function createRenderer(canvas: HTMLCanvasElement) {
         ctx.lineCap = "round";
         ctx.strokeStyle = "rgba(255,255,255,0.22)";
         ctx.stroke();
+
+        // …and a chevron past the ring, pointing the way you're running.
+        const dir = Math.sign(dx);
+        const ax = stick.originX + dir * (STICK_MAX_OFFSET + 11);
+        ctx.beginPath();
+        ctx.moveTo(ax - dir * 5, stick.originY - 6);
+        ctx.lineTo(ax + dir * 4, stick.originY);
+        ctx.lineTo(ax - dir * 5, stick.originY + 6);
+        ctx.lineWidth = 2.5;
+        ctx.lineJoin = "round";
+        ctx.lineCap = "round";
+        ctx.strokeStyle = "rgba(255,255,255,0.32)";
+        ctx.stroke();
       }
 
-      // The thumb itself.
+      // The thumb itself — a soft-lit disc.
+      const grad = ctx.createRadialGradient(
+        stick.x,
+        stick.y - 7,
+        2,
+        stick.x,
+        stick.y,
+        22,
+      );
+      grad.addColorStop(0, "rgba(255,255,255,0.24)");
+      grad.addColorStop(1, "rgba(255,255,255,0.08)");
       ctx.beginPath();
-      ctx.arc(stick.x, stick.y, 21, 0, Math.PI * 2);
-      ctx.fillStyle = "rgba(255,255,255,0.14)";
+      ctx.arc(stick.x, stick.y, 22, 0, Math.PI * 2);
+      ctx.fillStyle = grad;
       ctx.fill();
       ctx.lineWidth = 1.5;
-      ctx.strokeStyle = "rgba(255,255,255,0.3)";
+      ctx.strokeStyle = "rgba(255,255,255,0.34)";
       ctx.stroke();
     }
 
     for (const zone of zones) {
       const lit = active.has(zone.id);
+
+      // Drop shadow lifts the button off the arena.
+      ctx.save();
+      ctx.shadowColor = "rgba(0,0,0,0.35)";
+      ctx.shadowBlur = 12;
+      ctx.shadowOffsetY = 3;
+      const fill = ctx.createRadialGradient(
+        zone.cx,
+        zone.cy - zone.r * 0.45,
+        zone.r * 0.15,
+        zone.cx,
+        zone.cy,
+        zone.r,
+      );
+      if (lit) {
+        fill.addColorStop(0, "rgba(255,122,126,0.36)");
+        fill.addColorStop(1, "rgba(255,122,126,0.14)");
+      } else {
+        fill.addColorStop(0, "rgba(255,255,255,0.12)");
+        fill.addColorStop(1, "rgba(255,255,255,0.05)");
+      }
       ctx.beginPath();
       ctx.arc(zone.cx, zone.cy, zone.r, 0, Math.PI * 2);
-      ctx.fillStyle = lit ? "rgba(255,255,255,0.18)" : "rgba(255,255,255,0.06)";
+      ctx.fillStyle = fill;
       ctx.fill();
-      ctx.lineWidth = 1.5;
-      ctx.strokeStyle = lit ? "rgba(255,255,255,0.45)" : "rgba(255,255,255,0.14)";
+      ctx.restore();
+
+      ctx.beginPath();
+      ctx.arc(zone.cx, zone.cy, zone.r, 0, Math.PI * 2);
+      ctx.lineWidth = lit ? 2 : 1.5;
+      ctx.strokeStyle = lit ? "rgba(255,150,153,0.7)" : "rgba(255,255,255,0.16)";
       ctx.stroke();
 
-      ctx.fillStyle = lit ? "rgba(255,255,255,0.9)" : "rgba(255,255,255,0.4)";
-      ctx.font = `${Math.round(zone.r * 0.6)}px ui-sans-serif, system-ui, sans-serif`;
-      ctx.fillText(zone.label, zone.cx, zone.cy + 1);
+      const ink = lit ? "rgba(255,255,255,0.96)" : "rgba(255,255,255,0.5)";
+      if (zone.id === "jump") drawJumpIcon(ctx, zone.cx, zone.cy, zone.r, ink);
+      else drawAttackIcon(ctx, zone.cx, zone.cy, zone.r, ink);
     }
     ctx.restore();
   }
@@ -328,7 +836,7 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     clear,
     beginWorld,
     endWorld,
-    drawArena,
+    drawWorldBack,
     drawParticles,
     drawStickman,
     drawControls,

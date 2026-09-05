@@ -76,12 +76,18 @@ talking to each other.
 
 ```bash
 npm run dev    # in one terminal
-npm test       # in another — lobby, match, combat, feel
+npm test       # in another — maps, lobby, match, combat, feel
 ```
 
+- **`test:maps`** — the one suite that needs no server: it runs the shared
+  physics step through simulated jumps between every platform of every shipped
+  map and asserts each solid is reachable from the spawn points, so a map can
+  never ship with a tier hung higher than a jump can carry you.
 - **`test:lobby`** — room codes are short and unique, joining by code lands you
   in the right room, a bad code fails cleanly, the room fills to exactly
-  `MAX_PLAYERS`, and `configure` is host-only and validated.
+  `MAX_PLAYERS`, `configure` is host-only and validated, and the wardrobe
+  (join options + the `customize` message) applies valid picks, drops junk, and
+  only ever restyles the sender.
 - **`test:match`** — plays a whole match to completion and asserts the state
   machine: host-only start, countdown freeze, life loss, respawn, elimination,
   round scoring, the match winner, and replay.
@@ -313,9 +319,70 @@ The screen also holds a wake-lock while you are in a game, so the phone does not
 dim mid-round, and re-takes it when you come back to the tab — browsers drop the
 lock whenever the page is hidden, and forgetting to re-acquire is the usual bug.
 
+## Wardrobe
+
+Purely cosmetic customisation, and deliberately kept out of the simulation:
+neither the skin colour nor the hat is ever read by `stepBody`, so a look can
+never change a hitbox or the physics. The picker lives on the landing screen
+(so your choice rides in on the join options) and again in the lobby panel (so
+you can restyle while you wait). Both write through to `localStorage`, so a
+repeat visit remembers you.
+
+- **Colour** is any `#rrggbb` — sixteen swatches plus a native colour input.
+  Without a pick you get the join-order colour from `PLAYER_COLORS`.
+- **Hats** are a fixed list of ids in `shared/src/constants.ts` (`HATS`); the
+  client renderer draws each one, the server only stores and validates the id.
+
+The pick travels as `color` / `hat` join options and, for later changes, a
+`customize` message. Every value is validated server-side against the shared
+lists — a bad colour or an unknown hat is dropped, leaving the old one in
+place — and `customize` only ever restyles the sender.
+
+## Maps and worlds
+
+The arena is no longer one hard-coded platform. `shared/src/maps.ts` holds a
+catalog of `WorldMap`s and the host picks one from the lobby (`World` row —
+a grid of schematic previews — synced as `ArenaState.mapId`, validated
+server-side against the shipped list). Seven ship today: **Classic** (the
+original geometry, now with a backdrop), **Towers** (a four-storey scaffold),
+**Canyon** (a spiked gap between two mesas), **Foundry** (girders, catwalks and
+live saw blades), **Skyway** (floating stones over open air), **Rooftops**
+(three roofs at three heights with fatal gaps between them) and **IBM Bulgaria
+(SAC)** (the Sofia Airport Center complex — a lakeside plaza under a climbable
+glass façade, with the lake as the only way off the map).
+
+Every tier of every map is reachable: a full-hold jump lifts the feet ~97px
+(`MAX_JUMP_RISE`), and maps are built to a comfortable ~84, so no platform is
+scenery. `npm run test:maps` simulates real jumps (the shared `stepBody`)
+between every platform pair and fails if a solid can't be reached from the
+spawns — it needs no server, so it runs in a fraction of a second.
+
+A map is all data, split by who reads it:
+
+- **`solids`** — what `stepBody()` collides with. A solid with `oneWay: true`
+  catches a body only on the way down and only when its feet were above the top
+  face last tick, so a stack of thin beams is climbable and drop-through
+  without a dedicated input. That is what multi-level platforms are.
+- **`hazards`** — rectangles that cost a life on contact during `playing`
+  (spikes, saw blades). Resolved on the server right next to the fall off the
+  world — same one-life cost, and the client predicts neither. A body already
+  dying is skipped, so a corpse on the spikes isn't re-killed every tick.
+- **`spawns`** / **`killPlaneY`** — per map.
+- **`background`** — parallax layers, purely the renderer's. Each layer has a
+  `depth` it multiplies a camera by; the camera trails your own fighter,
+  clamped, so the layers *sway* rather than pan (~0.02–0.16). Objects are
+  simple shapes (`skyline`, `mountain`, `moon`, `cloud`, `embers`, …) drawn in
+  `client/src/render.ts`; deleting every layer would leave a map that plays
+  identically.
+
+Determinism note: the server hosts many rooms in one process, so it never
+touches the `activeMap()` module global — it passes each room's map explicitly
+into `stepBody`/`spawnBody`. The client has one room and does set the global,
+from `state.mapId`, before the reconciler runs.
+
 ## Not built yet
 
-The colour picker, weapons, and the shrinking platform. Matter.js is not a dependency yet — the
+Weapons and the shrinking platform. Matter.js is not a dependency yet — the
 character controller in `shared/src/physics.ts` is a deliberately small
 deterministic AABB stepper, which is what prediction and replay need; Matter.js
 comes in with ragdolls, where determinism matters less.

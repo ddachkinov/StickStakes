@@ -11,16 +11,23 @@ import {
   JUMP_BUFFER_TICKS,
   JUMP_CUT_MULTIPLIER,
   JUMP_VELOCITY,
-  KILL_PLANE_Y,
   MAX_FALL_SPEED,
   MOVE_SPEED,
-  PLATFORMS,
   PLAYER_HEIGHT,
   PLAYER_WIDTH,
-  SPAWN_POINTS,
   type Rect,
 } from "./constants.js";
+import { activeMap, type Solid, type StepWorld } from "./maps.js";
 import { NEUTRAL_INPUT, type InputIntent, type PlayerBody } from "./types.js";
+
+/**
+ * How far below a one-way platform's top face the feet may already be, last
+ * tick, and still be snapped onto it. Absorbs a single fast frame without
+ * letting you grab a ledge you've clearly dropped past.
+ */
+const ONE_WAY_GRACE = 8;
+
+type SpawnList = readonly { x: number; y: number }[];
 
 /**
  * The one physics step. The server runs it to produce truth; the client runs
@@ -29,9 +36,16 @@ import { NEUTRAL_INPUT, type InputIntent, type PlayerBody } from "./types.js";
  * `Date.now`, or wall-clock dt — determinism is the whole point of this file.
  */
 
-/** x/y are the centre of the feet-anchored body: x = centre, y = bottom. */
-export function spawnBody(spawnIndex: number): PlayerBody {
-  const spawn = SPAWN_POINTS[spawnIndex % SPAWN_POINTS.length]!;
+/**
+ * x/y are the centre of the feet-anchored body: x = centre, y = bottom.
+ * The spawn list defaults to the active map's; the server passes its room's
+ * map explicitly so many rooms can run different worlds at once.
+ */
+export function spawnBody(
+  spawnIndex: number,
+  spawns: SpawnList = activeMap().spawns,
+): PlayerBody {
+  const spawn = spawns[spawnIndex % spawns.length]!;
   return {
     x: spawn.x,
     y: spawn.y,
@@ -90,7 +104,9 @@ export function stepBody(
   body: PlayerBody,
   input: InputIntent,
   dt: number = FIXED_DT,
+  world: StepWorld = activeMap(),
 ): boolean {
+  const solids = world.solids;
   // Frozen: held perfectly still, input ignored. Same branch on both sides, so
   // the client's prediction freezes in lock-step with the server's truth.
   if (body.frozen) {
@@ -146,12 +162,16 @@ export function stepBody(
 
   // --- integrate and resolve, one axis at a time ---
   body.x += body.vx * dt;
-  resolveHorizontal(body);
+  resolveHorizontal(body, solids);
 
   const wasGrounded = body.grounded;
+  // Feet before this tick's vertical move — a one-way platform only catches a
+  // body that was at or above its top face, so you rise through it and land on
+  // the way down.
+  const prevFeet = body.y;
   body.y += body.vy * dt;
   body.grounded = false;
-  resolveVertical(body);
+  resolveVertical(body, solids, prevFeet);
 
   if (body.grounded) body.coyote = COYOTE_TICKS;
   else if (body.coyote > 0) body.coyote -= 1;
@@ -159,16 +179,19 @@ export function stepBody(
 
   if (body.jumpBuffer > 0) body.jumpBuffer -= 1;
 
-  return body.y > KILL_PLANE_Y;
+  return body.y > world.killPlaneY;
 }
 
-function resolveHorizontal(body: PlayerBody): void {
+function resolveHorizontal(body: PlayerBody, solids: readonly Solid[]): void {
   const box = bodyAabb(body);
-  for (const platform of PLATFORMS) {
-    if (!overlapsRect(box, platform)) continue;
+  for (const solid of solids) {
+    // One-way platforms never block sideways — you can run straight through
+    // the thin beam and only meet it under your feet.
+    if (solid.oneWay) continue;
+    if (!overlapsRect(box, solid)) continue;
     // Push out along the shallower horizontal side.
-    const fromLeft = platform.x - (box.x + box.width);
-    const fromRight = platform.x + platform.width - box.x;
+    const fromLeft = solid.x - (box.x + box.width);
+    const fromRight = solid.x + solid.width - box.x;
     if (Math.abs(fromLeft) < Math.abs(fromRight)) body.x += fromLeft;
     else body.x += fromRight;
     body.vx = 0;
@@ -176,18 +199,35 @@ function resolveHorizontal(body: PlayerBody): void {
   }
 }
 
-function resolveVertical(body: PlayerBody): void {
+function resolveVertical(
+  body: PlayerBody,
+  solids: readonly Solid[],
+  prevFeet: number,
+): void {
   const box = bodyAabb(body);
-  for (const platform of PLATFORMS) {
-    if (!overlapsRect(box, platform)) continue;
+  for (const solid of solids) {
+    if (!overlapsRect(box, solid)) continue;
+
+    if (solid.oneWay) {
+      // Only ever catches a descending body whose feet were above the top face
+      // last tick; rising through it, or already past it, does nothing.
+      if (body.vy < 0) continue;
+      if (prevFeet > solid.y + ONE_WAY_GRACE) continue;
+      body.y = solid.y;
+      body.vy = 0;
+      body.grounded = true;
+      box.y = body.y - PLAYER_HEIGHT;
+      continue;
+    }
+
     if (body.vy >= 0) {
       // Falling onto the top face.
-      body.y = platform.y;
+      body.y = solid.y;
       body.vy = 0;
       body.grounded = true;
     } else {
       // Rising into the underside.
-      body.y = platform.y + platform.height + PLAYER_HEIGHT;
+      body.y = solid.y + solid.height + PLAYER_HEIGHT;
       body.vy = 0;
     }
     box.y = body.y - PLAYER_HEIGHT;
@@ -195,8 +235,12 @@ function resolveVertical(body: PlayerBody): void {
 }
 
 /** Put a body back at its spawn point, in place. Used on both sides. */
-export function respawnBody(body: PlayerBody, spawnIndex: number): void {
-  copyBody(spawnBody(spawnIndex), body);
+export function respawnBody(
+  body: PlayerBody,
+  spawnIndex: number,
+  spawns: SpawnList = activeMap().spawns,
+): void {
+  copyBody(spawnBody(spawnIndex, spawns), body);
 }
 
 /**

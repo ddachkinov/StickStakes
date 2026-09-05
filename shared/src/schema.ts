@@ -1,11 +1,13 @@
 import { schema, t, type SchemaType } from "@colyseus/schema";
 import {
+  DEFAULT_HAT,
   DEFAULT_STAKE,
   LIVES_PER_ROUND,
   MAX_PLAYERS,
   ROUND_WINS_TO_TAKE_MATCH,
   TOTAL_ROUNDS,
 } from "./constants.js";
+import { DEFAULT_MAP_ID } from "./maps.js";
 import type { PlayerBody } from "./types.js";
 
 /**
@@ -31,7 +33,14 @@ export type FightInput = SchemaType<typeof FightInput>;
 export const Player = schema(
   {
     name: t.string().default(""),
+    /**
+     * Skin colour. Defaults to the join-order colour from `PLAYER_COLORS`, but
+     * the player can override it with any `#rrggbb` from the wardrobe. Cosmetic
+     * only — never read by the physics step.
+     */
     color: t.string().default("#ffffff"),
+    /** Wardrobe hat id — one of `HATS`. Cosmetic only; the client draws it. */
+    hat: t.string().default(DEFAULT_HAT),
     /** Join order, also the spawn point index. */
     slot: t.uint8().default(0),
 
@@ -45,6 +54,12 @@ export const Player = schema(
      * next round begins, then joins as a normal fighter.
      */
     spectating: t.boolean().default(true),
+    /**
+     * Lobby-only: has this player readied up? The host's start is gated until
+     * everyone has. Cleared for everyone at the start of each match, so the
+     * next match (or "play again") needs a fresh round of readies.
+     */
+    ready: t.boolean().default(false),
     /** Server tick until which the player is face-down after a death (0 = alive). */
     deadUntilTick: t.number().default(0),
     /** Server tick until which fresh-spawn i-frames last (0 = vulnerable). */
@@ -109,6 +124,14 @@ export const ArenaState = schema(
     lastRoundWinnerId: t.string().default(""),
     /** Winner of the match (session id) once phase is matchOver, else "". */
     matchWinnerId: t.string().default(""),
+
+    /**
+     * Which world the fight happens on — one of the ids in shared `WORLD_MAPS`.
+     * The host sets it from the lobby; both sides resolve it with `getMap()`
+     * and step against that map's `solids`. Cosmetic layers aside, this is the
+     * only thing that changes the arena geometry.
+     */
+    mapId: t.string().default(DEFAULT_MAP_ID),
 
     /**
      * What's riding on this match, in the host's own words.

@@ -1,5 +1,7 @@
-import { CloseCode, Predict, getStateCallbacks } from "@colyseus/sdk";
+import { Predict, getStateCallbacks } from "@colyseus/sdk";
 import {
+  ARENA_HEIGHT,
+  ARENA_WIDTH,
   ATTACK_SWING_MS,
   BODY_FIELDS,
   INTERPOLATION_DELAY_MS,
@@ -9,6 +11,8 @@ import {
   type FightInput,
   type MatchPhase,
   type Player,
+  getMap,
+  setActiveMap,
   stepBody,
 } from "@stickstakes/shared";
 import { createHud } from "./hud.js";
@@ -50,46 +54,30 @@ const canvas = document.querySelector<HTMLCanvasElement>("#stage")!;
 const statusEl = document.querySelector<HTMLElement>("#status")!;
 const fullscreenBtn = document.querySelector<HTMLButtonElement>("#fullscreen")!;
 const muteBtn = document.querySelector<HTMLButtonElement>("#mute")!;
+const rotateEl = document.querySelector<HTMLElement>("#rotate")!;
+
+/**
+ * The fight is a 16:9 landscape arena — on a portrait phone it would letterbox
+ * down to a useless sliver. So while a round is live and the phone is upright,
+ * take the screen over with a "turn sideways" prompt. The menus (landing,
+ * lobby, result) stay usable in either orientation.
+ */
+const portraitMq = window.matchMedia("(orientation: portrait)");
+let fightingNow = false;
+let rotateShown = false;
+
+function updateRotateGate(): void {
+  const show = fightingNow && portraitMq.matches;
+  if (show === rotateShown) return;
+  rotateShown = show;
+  rotateEl.hidden = !show;
+}
+
+portraitMq.addEventListener("change", updateRotateGate);
 
 function paintMuteButton(): void {
   muteBtn.textContent = audio.muted ? "🔇" : "🔊";
   muteBtn.setAttribute("aria-pressed", String(audio.muted));
-}
-
-const dropped = document.querySelector<HTMLElement>("#dropped")!;
-const droppedTitle = document.querySelector<HTMLElement>("#dropped-title")!;
-const droppedNote = document.querySelector<HTMLElement>("#dropped-note")!;
-const droppedAction = document.querySelector<HTMLButtonElement>("#dropped-action")!;
-
-/**
- * The connection went away. Two cases that deserve different words:
- *
- * A deploy is the common one. `pm2 reload` restarts the process and rooms live
- * in its memory, so every game in progress is genuinely gone — rejoining the
- * same code would just fail with "no such game". Say so, and offer a fresh
- * start rather than a reconnect that cannot work.
- *
- * Anything else is probably the network (a phone leaving wifi, a tunnel
- * blipping). There the room may well still be there, so reload keeping the
- * code and let the normal join path try again.
- */
-function showDropped(code: number): void {
-  const deployed = code === CloseCode.SERVER_SHUTDOWN;
-
-  droppedTitle.textContent = deployed ? "Server restarted" : "Connection lost";
-  droppedNote.textContent = deployed
-    ? "A new version was just deployed, which ends any game in progress. Start a new one and share the new code."
-    : "Lost touch with the server. If the game is still running you'll drop straight back in.";
-  droppedAction.textContent = deployed ? "New game" : "Reconnect";
-
-  droppedAction.onclick = () => {
-    // Dropping the code sends you to a clean landing screen; keeping it makes
-    // the reload attempt the same room again.
-    location.href = deployed ? `${location.origin}${location.pathname}` : location.href;
-    if (!deployed) location.reload();
-  };
-
-  dropped.hidden = false;
 }
 
 muteBtn.addEventListener("click", () => {
@@ -127,6 +115,9 @@ function inviteUrl(code: string): string {
   return `${location.origin}${location.pathname}?code=${code}`;
 }
 
+const clamp = (value: number, lo: number, hi: number): number =>
+  value < lo ? lo : value > hi ? hi : value;
+
 /**
  * Should this stickman be on screen at all? Dead between respawns, knocked out
  * for the round, or sitting out a match they joined late — all invisible.
@@ -154,9 +145,10 @@ async function connect(): Promise<ArenaRoom> {
   for (;;) {
     const choice = await landing.choose();
     try {
+      const wardrobe = { color: choice.color, hat: choice.hat };
       const room = choice.code
-        ? await joinArenaByCode(choice.code, choice.name)
-        : await createArena(choice.name);
+        ? await joinArenaByCode(choice.code, choice.name, wardrobe)
+        : await createArena(choice.name, wardrobe);
 
       // Put the code in the address bar so the host can just share the URL,
       // and so a reload rejoins the same game instead of starting a new one.
@@ -205,6 +197,14 @@ async function main(): Promise<void> {
    * knockbacks all replay in lock-step with the server instead of fighting it.
    */
   const $ = getStateCallbacks(room);
+
+  /**
+   * The world both sides step against. Set it before the reconciler runs, and
+   * follow the host's lobby pick — the map only ever changes between rounds, so
+   * flipping the shared active map here can't desync a live replay.
+   */
+  setActiveMap(room.state.mapId);
+  $(room.state).listen("mapId", (value) => setActiveMap(value as string));
 
   /**
    * Landing dust needs the speed you were falling at, but by the time
@@ -288,9 +288,11 @@ async function main(): Promise<void> {
     });
   });
 
-  hud.onStart(() => room.send("startMatch"));
+  lobby.onStart(() => room.send("startMatch"));
   result.onPlayAgain(() => room.send("startMatch"));
   lobby.onConfigure((change) => room.send("configure", change));
+  lobby.onCustomize((change) => room.send("customize", change));
+  lobby.onReady((ready) => room.send("ready", { ready }));
 
   function flash(message: string): void {
     if (!message) return;
@@ -320,6 +322,7 @@ async function main(): Promise<void> {
         }),
         code: () => room.roomId,
         start: () => room.send("startMatch"),
+        ready: (value = true) => room.send("ready", { ready: value }),
         configure: (change: unknown) => room.send("configure", change),
         phase: () => room.state.phase,
         stake: () => room.state.stake,
@@ -338,6 +341,8 @@ async function main(): Promise<void> {
           Array.from(room.state.players.entries()).map(([id, p]) => ({
             id,
             name: p.name,
+            color: p.color,
+            hat: p.hat,
             self: id === room.sessionId,
             x: Math.round(predict.value(p, "x")),
             y: Math.round(predict.value(p, "y")),
@@ -359,7 +364,6 @@ async function main(): Promise<void> {
     wake.release();
     haptics.stop();
     statusEl.textContent = `disconnected (${code})`;
-    showDropped(code);
   });
 
   let debugAt = 0;
@@ -386,9 +390,21 @@ async function main(): Promise<void> {
       inputHandle.send();
     }
 
+    // The parallax camera trails your own fighter (or the arena centre before
+    // one exists), clamped so the layers sway rather than pan.
+    const selfPlayer = state.players.get(room.sessionId);
+    const focusX = selfPlayer ? predict.value(selfPlayer, "x") : ARENA_WIDTH / 2;
+    const focusY = selfPlayer ? predict.value(selfPlayer, "y") : ARENA_HEIGHT * 0.6;
+    const cam = {
+      x: clamp(focusX - ARENA_WIDTH / 2, -260, 260),
+      y: clamp(focusY - ARENA_HEIGHT * 0.62, -150, 150),
+      t: now / 1000,
+    };
+    const map = getMap(state.mapId);
+
     renderer.clear();
     renderer.beginWorld(fx.shakeX, fx.shakeY);
-    renderer.drawArena();
+    renderer.drawWorldBack(map, cam);
 
     const showLives = phase !== "lobby";
 
@@ -402,6 +418,7 @@ async function main(): Promise<void> {
         facing: player.facing,
         grounded: player.grounded,
         color: player.color,
+        hat: player.hat,
         name: player.name,
         isSelf: sessionId === room.sessionId,
         lives: player.lives,
@@ -419,9 +436,18 @@ async function main(): Promise<void> {
     renderer.drawParticles(fx.particles);
 
     renderer.endWorld();
-    renderer.drawControls(input.zones, input.active, input.stick);
+    // The thumb controls only belong on screen when there is something to
+    // drive — never under the lobby panel or the result card.
+    if (phase === "countdown" || phase === "playing") {
+      renderer.drawControls(input.zones, input.active, input.stick);
+    }
 
     hud.update(state, room.sessionId);
+
+    // Gate the "turn your phone" takeover on the live-round phases.
+    fightingNow =
+      phase === "countdown" || phase === "playing" || phase === "roundOver";
+    updateRotateGate();
 
     // The lobby panel and the result card each own one phase; both stay out of
     // the way while there is a fight to watch.
@@ -433,10 +459,15 @@ async function main(): Promise<void> {
 
     if (now - debugAt > 250) {
       debugAt = now;
+      const rtt = Math.round(room.clock.rtt());
+      // Colour the connection dot: green under 80ms, amber under 160, red past.
+      statusEl.dataset.ping = rtt < 80 ? "good" : rtt < 160 ? "ok" : "bad";
       statusEl.textContent =
         statusEl.dataset.flash ??
-        `${room.roomId} · ${phase} · ${state.players.size}/${state.maxPlayers} · ` +
-          `${Math.round(room.clock.rtt())}ms · ${inputHandle.pendingCount} in flight`;
+        (import.meta.env.DEV
+          ? `${room.roomId} · ${phase} · ${state.players.size}/${state.maxPlayers} · ` +
+            `${rtt}ms · ${inputHandle.pendingCount} in flight`
+          : `${room.roomId} · ${rtt}ms`);
     }
 
     requestAnimationFrame(frame);
