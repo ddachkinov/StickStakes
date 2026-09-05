@@ -14,6 +14,8 @@ API keys, no Docker — Node 22 and nothing else.
 > It is a joke tracker, not a betting app. No payments, no wallets, no money
 > moves anywhere. The stake is free text and the result is a scoreboard.
 
+MIT licensed — see [`LICENSE`](./LICENSE).
+
 ## Repo shape
 
 ```

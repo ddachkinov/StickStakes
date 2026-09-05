@@ -120,6 +120,16 @@ The MVP is complete, so what is left is the stuff you only learn by playing it:
 - Tuning. Jump height, knockback, shake — all constants in `shared/` and
   `client/src/fx.ts`, all guesses that have not met enough real thumbs.
 
+## Licence
+
+The project is MIT licensed ([`LICENSE`](./LICENSE)). By opening a pull request
+you are offering your contribution under the same terms — that is all the
+paperwork there is; there is no CLA to sign.
+
+Every dependency is MIT or Apache-2.0, both permissive. If you add one, check
+it is too: a copyleft dependency would force a licence change on the whole
+project.
+
 ## Deploying
 
 You cannot, and that is fine — deployment is maintainer-only. `npm run deploy`
