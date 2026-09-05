@@ -1,4 +1,4 @@
-import { Predict, getStateCallbacks } from "@colyseus/sdk";
+import { CloseCode, Predict, getStateCallbacks } from "@colyseus/sdk";
 import {
   ATTACK_SWING_MS,
   BODY_FIELDS,
@@ -54,6 +54,42 @@ const muteBtn = document.querySelector<HTMLButtonElement>("#mute")!;
 function paintMuteButton(): void {
   muteBtn.textContent = audio.muted ? "🔇" : "🔊";
   muteBtn.setAttribute("aria-pressed", String(audio.muted));
+}
+
+const dropped = document.querySelector<HTMLElement>("#dropped")!;
+const droppedTitle = document.querySelector<HTMLElement>("#dropped-title")!;
+const droppedNote = document.querySelector<HTMLElement>("#dropped-note")!;
+const droppedAction = document.querySelector<HTMLButtonElement>("#dropped-action")!;
+
+/**
+ * The connection went away. Two cases that deserve different words:
+ *
+ * A deploy is the common one. `pm2 reload` restarts the process and rooms live
+ * in its memory, so every game in progress is genuinely gone — rejoining the
+ * same code would just fail with "no such game". Say so, and offer a fresh
+ * start rather than a reconnect that cannot work.
+ *
+ * Anything else is probably the network (a phone leaving wifi, a tunnel
+ * blipping). There the room may well still be there, so reload keeping the
+ * code and let the normal join path try again.
+ */
+function showDropped(code: number): void {
+  const deployed = code === CloseCode.SERVER_SHUTDOWN;
+
+  droppedTitle.textContent = deployed ? "Server restarted" : "Connection lost";
+  droppedNote.textContent = deployed
+    ? "A new version was just deployed, which ends any game in progress. Start a new one and share the new code."
+    : "Lost touch with the server. If the game is still running you'll drop straight back in.";
+  droppedAction.textContent = deployed ? "New game" : "Reconnect";
+
+  droppedAction.onclick = () => {
+    // Dropping the code sends you to a clean landing screen; keeping it makes
+    // the reload attempt the same room again.
+    location.href = deployed ? `${location.origin}${location.pathname}` : location.href;
+    if (!deployed) location.reload();
+  };
+
+  dropped.hidden = false;
 }
 
 muteBtn.addEventListener("click", () => {
@@ -323,6 +359,7 @@ async function main(): Promise<void> {
     wake.release();
     haptics.stop();
     statusEl.textContent = `disconnected (${code})`;
+    showDropped(code);
   });
 
   let debugAt = 0;

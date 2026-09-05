@@ -23,7 +23,9 @@
     "test:combat": "node test/combat.mjs",
     "test": "npm run test:lobby && npm run test:match && npm run test:combat && npm run test:feel",
     "test:lobby": "node test/lobby.mjs",
-    "test:feel": "node test/feel.mjs"
+    "test:feel": "node test/feel.mjs",
+    "deploy": "git push && ssh gp '/srv/stickstakes/deploy.sh'",
+    "logs": "ssh gp 'pm2 logs stickstakes'"
   },
   "devDependencies": {
     "concurrently": "^10.0.5",

@@ -77,6 +77,22 @@ page.on("console", (m) => {
 
 await page.goto(PAGE_URL, { waitUntil: "domcontentloaded" });
 await page.waitForSelector("#landing-create", { timeout: 20000 });
+
+/*
+ * The counters this test reads live on the dev-only `__ss` hook, which a
+ * production bundle deliberately strips — so pointed at `npm start` there is
+ * nothing to assert against. Say so and skip, rather than dying on an
+ * undefined read and looking like the feedback layer is broken.
+ */
+const hasDevHook = await page.evaluate(() => typeof globalThis.__ss !== "undefined");
+if (!hasDevHook) {
+  console.log(
+    "\nSKIPPED: no dev hook on the page — test:feel needs the dev build " +
+      "(npm run dev), not a production bundle\n",
+  );
+  await browser.close();
+  process.exit(0);
+}
 await page.fill("#landing-name", "WATCH");
 await page.click("#landing-create"); // also the gesture that unlocks audio
 await page.waitForFunction(() => location.search.includes("code="), { timeout: 20000 });

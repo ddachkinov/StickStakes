@@ -79,6 +79,19 @@
     <button id="mute" type="button" aria-label="Sound" aria-pressed="false">🔊</button>
     <button id="fullscreen" type="button" aria-label="Fullscreen">⛶</button>
 
+    <!--
+      Shown when the connection drops. Rooms live in the server's memory, so a
+      deploy (pm2 reload) ends every game in progress — that case gets its own
+      wording rather than a generic "connection lost".
+    -->
+    <div id="dropped" hidden>
+      <div id="dropped-card">
+        <h2 id="dropped-title"></h2>
+        <p id="dropped-note"></p>
+        <button id="dropped-action" type="button" class="primary"></button>
+      </div>
+    </div>
+
     <!-- Shown first; everything above is inert until this is dismissed. -->
     <div id="landing">
       <form id="landing-card" autocomplete="off">
