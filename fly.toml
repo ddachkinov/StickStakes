@@ -1,0 +1,50 @@
+# Fly.io deployment for StickStakes.
+#
+# Rename `app` to something unique, then:
+#   fly launch --no-deploy --copy-config    (first time — creates the app)
+#   fly deploy
+#
+# ONE MACHINE ON PURPOSE. Rooms live in this process's memory, because Colyseus
+# defaults to LocalPresence + LocalDriver. Run two machines and a room created
+# on one is invisible to the other, so roughly half of all code joins would fail
+# with "not found" — the bug would look random and be miserable to chase. To
+# scale past one machine you must first add @colyseus/redis-presence and
+# @colyseus/redis-driver and point them at a shared Redis.
+
+app = "stickstakes"
+primary_region = "otp"   # Bucharest — the closest Fly region to Sofia. `waw`
+                         # (Warsaw) and `fra` (Frankfurt) are the next best.
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  NODE_ENV = "production"
+  PORT = "8080"
+
+[http_service]
+  internal_port = 8080
+  force_https = true          # the fullscreen API, wake-lock and PWA install all need it
+  auto_stop_machines = false  # never suspend mid-match
+  auto_start_machines = true
+  min_machines_running = 1    # set to 0 to save a couple of dollars a month, at
+                              # the cost of a cold start on the first tap
+  processes = ["app"]
+
+  # A game server holds one long-lived WebSocket per player, so the connection
+  # count is the real load signal rather than requests per second.
+  [http_service.concurrency]
+    type = "connections"
+    hard_limit = 200
+    soft_limit = 150
+
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval = "30s"
+    method = "GET"
+    path = "/health"
+    timeout = "5s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

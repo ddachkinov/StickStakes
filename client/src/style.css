@@ -1,0 +1,676 @@
+:root {
+  --bg: #0e1116;
+  --ink: #e8ecf1;
+  --dim: rgba(232, 236, 241, 0.55);
+  --panel: rgba(14, 17, 22, 0.62);
+  --safe-t: max(8px, env(safe-area-inset-top));
+  --safe-l: max(10px, env(safe-area-inset-left));
+  --safe-r: max(10px, env(safe-area-inset-right));
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--ink);
+  font: 500 14px/1.3 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  /* Thumbs are for the game, not for scrolling or zooming the page. */
+  touch-action: none;
+  overscroll-behavior: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+#stage {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* Everything above the canvas is presentation; only real buttons take taps. */
+#roster,
+#banner,
+#bigtext,
+#hud {
+  position: fixed;
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* ------------------------------------------------------------------ roster */
+
+#roster {
+  top: var(--safe-t);
+  left: var(--safe-l);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+#roster li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px 3px 5px;
+  border-radius: 999px;
+  background: var(--panel);
+  line-height: 1;
+  transition: opacity 140ms ease;
+}
+
+/* Knocked out for the round: still listed, visibly done. */
+#roster li.is-out {
+  opacity: 0.38;
+}
+
+#roster li.is-self .roster-name {
+  font-weight: 700;
+}
+
+.roster-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.roster-name {
+  min-width: 3.2em;
+}
+
+.roster-host {
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  color: var(--dim);
+}
+
+.roster-lives,
+.roster-wins {
+  letter-spacing: 1px;
+}
+
+.roster-damage {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  min-width: 2.6em;
+  text-align: right;
+}
+
+.roster-wins {
+  color: #ffd166;
+}
+
+/* ------------------------------------------------------------------ banner */
+
+#banner {
+  top: var(--safe-t);
+  left: 50%;
+  transform: translateX(-50%);
+  /* Above #bigtext: a long winner name must never cover the host's button. */
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: var(--panel);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+#banner-round {
+  font-weight: 700;
+}
+
+#banner-note {
+  color: var(--dim);
+}
+
+#banner-action {
+  /* The one thing on this layer that is actually tappable. */
+  pointer-events: auto;
+  border: 0;
+  border-radius: 999px;
+  padding: 7px 16px;
+  background: var(--ink);
+  color: #0e1116;
+  font: 700 12px/1 inherit;
+  letter-spacing: 0.04em;
+}
+
+#banner-action:active {
+  transform: translateY(1px);
+}
+
+/* ----------------------------------------------------------------- bigtext */
+
+#bigtext {
+  /* Sits below the banner band, so a two-line result can't reach the button. */
+  top: 46%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  max-width: 86vw;
+  text-align: center;
+  text-shadow: 0 2px 18px rgba(0, 0, 0, 0.75);
+}
+
+#bigtext-main {
+  font-size: clamp(26px, 8vw, 58px);
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  line-height: 1.02;
+  text-wrap: balance;
+}
+
+#bigtext-sub {
+  margin-top: 6px;
+  font-size: clamp(11px, 3vw, 15px);
+  color: var(--dim);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+/* A short pop each time the centred text changes. */
+#bigtext.pop #bigtext-main {
+  animation: pop 260ms cubic-bezier(0.2, 1.4, 0.4, 1);
+}
+
+@keyframes pop {
+  from {
+    transform: scale(0.72);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #bigtext.pop #bigtext-main {
+    animation: none;
+  }
+}
+
+/* --------------------------------------------------------------- dev + misc */
+
+#hud {
+  bottom: max(6px, env(safe-area-inset-bottom));
+  left: var(--safe-l);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.45;
+}
+
+#fullscreen,
+#mute {
+  position: fixed;
+  z-index: 2;
+  top: var(--safe-t);
+  right: var(--safe-r);
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--ink);
+  font-size: 15px;
+  line-height: 1;
+}
+
+/* Sits just inboard of the fullscreen button, sharing its safe-area inset. */
+#mute {
+  right: calc(var(--safe-r) + 40px);
+}
+
+#mute[aria-pressed="true"] {
+  opacity: 0.45;
+}
+
+/* ================================================================= landing */
+
+#dropped {
+  position: fixed;
+  inset: 0;
+  z-index: 20; /* above the landing screen — this is the last word on screen */
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(9, 12, 16, 0.88);
+  backdrop-filter: blur(3px);
+}
+
+#dropped[hidden] {
+  display: none;
+}
+
+#dropped-card {
+  width: min(320px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  text-align: center;
+}
+
+#dropped-card h2 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 800;
+}
+
+#dropped-card p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  opacity: 0.72;
+}
+
+#landing {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: radial-gradient(120% 90% at 50% 0%, #1a2130 0%, var(--bg) 70%);
+  overflow-y: auto;
+}
+
+#landing[hidden] {
+  display: none;
+}
+
+#landing.is-busy {
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+#landing-card {
+  width: min(340px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  text-align: center;
+}
+
+#landing-card h1 {
+  margin: 0;
+  font-size: 30px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+#landing-card .tagline {
+  margin: 0 0 6px;
+  color: var(--dim);
+  font-size: 13px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-align: left;
+}
+
+.label {
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
+#landing input,
+#setup-stake,
+#split-total {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--ink);
+  font: 500 15px/1 inherit;
+}
+
+#landing input:focus,
+#setup-stake:focus,
+#split-total:focus {
+  outline: none;
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+button.primary,
+#landing-join,
+#result-share {
+  border: 0;
+  border-radius: 10px;
+  padding: 11px 16px;
+  background: var(--ink);
+  color: #0e1116;
+  font: 700 14px/1 inherit;
+}
+
+button.primary:active,
+#landing-join:active,
+#result-share:active {
+  transform: translateY(1px);
+}
+
+button:disabled {
+  opacity: 0.5;
+}
+
+.divider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--dim);
+  font-size: 11px;
+}
+
+.divider::before,
+.divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.join-row {
+  display: flex;
+  gap: 8px;
+}
+
+#landing-code {
+  flex: 1;
+  text-align: center;
+  font: 700 20px/1 ui-monospace, "SFMono-Regular", Consolas, monospace;
+  letter-spacing: 0.35em;
+  text-indent: 0.35em;
+  text-transform: uppercase;
+}
+
+#landing-error {
+  margin: 0;
+  min-height: 1.2em;
+  color: #ff8a8f;
+  font-size: 12px;
+}
+
+/* =================================================================== lobby */
+
+#lobby {
+  position: fixed;
+  z-index: 4;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(420px, calc(100vw - 32px));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: rgba(14, 17, 22, 0.86);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  /* The panel itself is inert; only its controls take taps. */
+  pointer-events: none;
+}
+
+#lobby[hidden] {
+  display: none;
+}
+
+#lobby button,
+#lobby input {
+  pointer-events: auto;
+}
+
+#lobby-code {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+#lobby-code-value {
+  flex: 1;
+  font: 800 30px/1 ui-monospace, "SFMono-Regular", Consolas, monospace;
+  letter-spacing: 0.22em;
+}
+
+#lobby-share {
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 999px;
+  padding: 7px 14px;
+  background: transparent;
+  color: var(--ink);
+  font: 600 12px/1 inherit;
+}
+
+#lobby-setup {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.setup-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.setup-row .label {
+  width: 4.2em;
+  flex: none;
+}
+
+.setup-stake-row {
+  align-items: stretch;
+}
+
+.chips {
+  display: flex;
+  gap: 6px;
+}
+
+.chip {
+  min-width: 34px;
+  padding: 6px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dim);
+  font: 600 13px/1 inherit;
+}
+
+.chip.is-on {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: #0e1116;
+}
+
+.chip:disabled {
+  opacity: 1;
+}
+
+.chip:disabled:not(.is-on) {
+  opacity: 0.45;
+}
+
+#lobby-hint {
+  margin: 0;
+  color: var(--dim);
+  font-size: 11px;
+}
+
+/* ================================================================== result */
+
+#result {
+  position: fixed;
+  z-index: 4;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(420px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  border-radius: 14px;
+  background: rgba(14, 17, 22, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  text-align: center;
+  pointer-events: none;
+}
+
+#result[hidden] {
+  display: none;
+}
+
+#result button,
+#result input {
+  pointer-events: auto;
+}
+
+#result-title {
+  font-size: clamp(22px, 6vw, 32px);
+  font-weight: 800;
+  line-height: 1.05;
+}
+
+#result-stake {
+  color: var(--ink);
+  font-size: 14px;
+  opacity: 0.85;
+}
+
+#result-standings {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-align: left;
+}
+
+#result-standings li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  font-size: 13px;
+}
+
+#result-standings li.is-self {
+  background: rgba(255, 255, 255, 0.12);
+  font-weight: 700;
+}
+
+.result-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.result-name {
+  flex: 1;
+}
+
+.result-wins {
+  color: var(--dim);
+  font-variant-numeric: tabular-nums;
+}
+
+#result-split {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--dim);
+}
+
+#result-split label {
+  flex: none;
+}
+
+#split-total {
+  width: 6.5em;
+  padding: 7px 9px;
+  font-size: 13px;
+}
+
+#split-out {
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+
+/* Ten players need two columns rather than a tower down the side. */
+#roster {
+  max-height: calc(100vh - 24px);
+  flex-wrap: wrap;
+  column-gap: 6px;
+}
+
+.result-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.result-actions button {
+  flex: 1;
+}
+
+#result-share {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  color: var(--ink);
+}
+
+/*
+ * Landscape phone: the viewport is short, and this is the orientation the game
+ * is actually played in. Tighten the landing card so it never needs scrolling.
+ */
+@media (max-height: 460px) {
+  #landing-card {
+    gap: 7px;
+  }
+
+  #landing-card h1 {
+    font-size: 22px;
+  }
+
+  #landing-card .tagline {
+    display: none;
+  }
+
+  #landing input,
+  button.primary,
+  #landing-join {
+    padding: 8px 12px;
+    font-size: 14px;
+  }
+
+  #landing-code {
+    font-size: 17px;
+  }
+}

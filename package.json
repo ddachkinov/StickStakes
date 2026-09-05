@@ -1,0 +1,36 @@
+{
+  "name": "stickstakes",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "workspaces": [
+    "shared",
+    "server",
+    "client"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build:shared": "npm --workspace @stickstakes/shared run build",
+    "dev": "npm run build:shared && concurrently -k -n shared,server,client -c gray,cyan,magenta \"npm --workspace @stickstakes/shared run dev\" \"npm --workspace @stickstakes/server run dev\" \"npm --workspace @stickstakes/client run dev\"",
+    "dev:phone": "npm run build:shared && concurrently -n shared,server,client,tunnel -c gray,cyan,magenta,green \"npm --workspace @stickstakes/shared run dev\" \"npm --workspace @stickstakes/server run dev\" \"npm --workspace @stickstakes/client run dev\" \"node scripts/tunnel.mjs\"",
+    "tunnel": "node scripts/tunnel.mjs",
+    "build": "npm run build:shared && npm --workspace @stickstakes/server run build && npm --workspace @stickstakes/client run build",
+    "typecheck": "npm run build:shared && npm --workspace @stickstakes/server run typecheck && npm --workspace @stickstakes/client run typecheck",
+    "start": "npm --workspace @stickstakes/server run start",
+    "test:match": "node test/match.mjs",
+    "test:combat": "node test/combat.mjs",
+    "test": "npm run test:lobby && npm run test:match && npm run test:combat && npm run test:feel",
+    "test:lobby": "node test/lobby.mjs",
+    "test:feel": "node test/feel.mjs",
+    "deploy": "git push && ssh gp '/srv/stickstakes/deploy.sh'",
+    "logs": "ssh gp 'pm2 logs stickstakes'"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.5",
+    "playwright-core": "^1.63.0",
+    "qrcode-terminal": "^0.12.0",
+    "typescript": "^5.9.3"
+  }
+}
