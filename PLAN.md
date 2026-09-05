@@ -95,4 +95,5 @@ That is the MVP. What is left is the stuff you only find out by playing it with
 bored people at a table: tuning, weapons, the shrinking platform, a colour
 picker.
 
-See `README.md` for what exists today and "Not built yet" for the gaps.
+See `README.md` for what exists today and "Not built yet" for the gaps, and
+`CONTRIBUTING.md` if you want to help build any of it.

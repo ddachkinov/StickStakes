@@ -24,7 +24,7 @@
     "test": "npm run test:lobby && npm run test:match && npm run test:combat && npm run test:feel",
     "test:lobby": "node test/lobby.mjs",
     "test:feel": "node test/feel.mjs",
-    "deploy": "git push && ssh gp '/srv/stickstakes/deploy.sh'",
+    "deploy": "node scripts/deploy-remote.mjs",
     "logs": "ssh gp 'pm2 logs stickstakes'"
   },
   "devDependencies": {

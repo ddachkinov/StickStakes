@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# A newer push to the same PR makes the older run pointless.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: typecheck, build and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # --include=dev for the same reason deploy.sh uses it: the build needs
+      # typescript and vite, and npm drops devDependencies whenever
+      # NODE_ENV=production is set in the environment.
+      - name: Install
+        run: npm ci --include=dev
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      # Proves the production bundle builds — which is what the VPS serves.
+      - name: Build
+        run: npm run build
+
+      # test:feel drives a real browser. playwright-core ships without one, so
+      # fetch a version-matched Chromium rather than trusting whatever the
+      # runner image happens to include.
+      - name: Install Chromium
+        run: npx playwright-core install --with-deps chromium
+
+      # The suites need a live server. Starting it and running them in ONE step
+      # is deliberate: a background process started in a separate step depends
+      # on surviving that step's shell, which is a fragile thing to build a
+      # test pipeline on.
+      #
+      # It has to be `npm run dev` rather than `npm start`. test:feel reads a
+      # debug hook that production builds strip, so against a production bundle
+      # it would skip — a green run that tested nothing.
+      #
+      # FEEL_REQUIRE_BROWSER turns every "…so skipping" into a hard failure,
+      # for the same reason.
+      - name: Start the stack and run the suites
+        env:
+          FEEL_REQUIRE_BROWSER: "1"
+        run: |
+          npm run dev > /tmp/dev.log 2>&1 &
+          echo "waiting for the server and client to come up..."
+          up=""
+          for i in $(seq 1 90); do
+            if curl -sf http://localhost:2567/health > /dev/null \
+               && curl -sf http://localhost:5173/ > /dev/null; then
+              echo "up after ${i}s"
+              up=1
+              break
+            fi
+            sleep 1
+          done
+          if [ -z "$up" ]; then
+            echo "::error::dev stack did not come up in 90s"
+            cat /tmp/dev.log
+            exit 1
+          fi
+          npm test
+
+      - name: Server log on failure
+        if: failure()
+        run: cat /tmp/dev.log
+
+      # Guards the deployment invariant that is easiest to break by accident
+      # and worst to debug: rooms are in-process, so pm2 cluster mode would
+      # make roughly half of all join-by-code attempts fail with "not found".
+      - name: Check the pm2 config still runs a single fork
+        run: |
+          node -e '
+            const app = require("./ecosystem.config.cjs").apps[0];
+            if (app.exec_mode !== "fork" || app.instances !== 1) {
+              console.error(
+                "ecosystem.config.cjs must stay exec_mode:fork with instances:1 — " +
+                "Colyseus keeps rooms in process memory, so anything else breaks " +
+                "join-by-code. Add redis-presence + redis-driver before changing this."
+              );
+              process.exit(1);
+            }
+            console.log("ok: fork mode, single instance");
+          '

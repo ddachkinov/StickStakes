@@ -1,12 +1,18 @@
 # StickStakes
 
-A stickman brawler for settling who pays. See [`PLAN.md`](./PLAN.md) for the
-product; this file is the state of the code.
+A stickman brawler for settling who pays. Somebody loses, and the scoreboard
+says who is buying lunch. Play it at <https://play.groundpoint.net>.
 
-**Done so far:** the monorepo and netcode (step 1), the core match loop
-(Track A), combat (Track B), and the stakes layer (Track C) — room codes, the
-join screen, host setup, and an end screen that names who pays. Up to 10
-players per game.
+Up to 10 players from a four-letter room code, on whatever phones are already
+on the table. See [`PLAN.md`](./PLAN.md) for the product idea; this file is the
+state of the code.
+
+**Want to hack on it?** [`CONTRIBUTING.md`](./CONTRIBUTING.md) is the short
+version: clone, `npm install`, `npm run dev`, open two tabs. No database, no
+API keys, no Docker — Node 22 and nothing else.
+
+> It is a joke tracker, not a betting app. No payments, no wallets, no money
+> moves anywhere. The stake is free text and the result is a scoreboard.
 
 ## Repo shape
 
@@ -14,8 +20,8 @@ players per game.
 shared/   types, constants, the physics step BOTH sides run, and the wire schema
 server/   Colyseus room, authoritative 30Hz fixed timestep
 client/   Vite + canvas renderer + touch controls
-scripts/  cloudflared quick tunnel + QR, for testing on a phone
-test/     integration test that drives a whole match against a live server
+scripts/  dev tunnel + QR for phone testing, and the maintainer deploy script
+test/     integration suites that run against a live server
 ```
 
 `shared/` is the load-bearing one. `stepBody()` lives there and is called by the
@@ -84,7 +90,10 @@ npm test       # in another — lobby, match, combat, feel
   actually moved, audio unlocked, mute remembered. Feedback has no server-side
   truth to check against, so this is the only honest way to test it.
 
-Each exits non-zero on the first failed expectation, so CI can gate on them.
+Each exits non-zero on the first failed expectation. They all run in CI on every
+pull request (`.github/workflows/ci.yml`), alongside typecheck and a production
+build — so a contributor gets feedback without waiting on a review, and `main`
+can require the checks to pass before a merge.
 
 `test:feel` needs a Chromium. It uses `playwright-core`, which ships no browser,
 so nobody pays a 500MB download just to run the game — it finds an installed
@@ -237,7 +246,7 @@ locally before pushing.
 > Colyseus defaults to `LocalPresence` + `LocalDriver`. Run two and a room
 > created by one is invisible to the other, so roughly half of all code joins
 > fail with "not found" — a bug that looks random and is miserable to chase.
-> This is why `ecosystem.config.js` pins `exec_mode: "fork"` with
+> This is why `ecosystem.config.cjs` pins `exec_mode: "fork"` with
 > `instances: 1`; pm2's cluster mode would break the game outright. Scaling past
 > one process means adding `@colyseus/redis-presence` and
 > `@colyseus/redis-driver` first.
@@ -248,9 +257,16 @@ nginx terminates TLS and proxies everything to the Node process on
 `127.0.0.1:2567`, which serves both the built client and the game.
 
 ```bash
-npm run deploy   # git push, then run /srv/stickstakes/deploy.sh over ssh
+npm run deploy   # push main, then run /srv/stickstakes/deploy.sh over ssh
 npm run logs     # tail pm2 logs
 ```
+
+**Both are maintainer-only.** They need an SSH host alias `gp` that only the
+maintainer has; `npm run deploy` checks for it and exits with an explanation
+rather than a wall of ssh errors, and refuses to run from a branch other than
+`main` (the VPS pulls `main` with `--ff-only`, so deploying a side branch would
+be a no-op at best). Contributors deploy nothing — merged pull requests go live
+when the maintainer deploys.
 
 `deploy.sh` pulls, installs, builds and `pm2 reload`s. It runs
 `npm ci --include=dev` on purpose: the build needs `typescript` and `vite`,
@@ -269,7 +285,7 @@ nginx must proxy `/` as a whole with WebSocket upgrade headers — a narrower
 both of which are assigned at runtime, so there is no fixed path to match on.
 
 **No secrets or env vars are needed.** The app reads only `PORT` (default 2567)
-and `NODE_ENV`, both set in `ecosystem.config.js`. There is no database, no API
+and `NODE_ENV`, both set in `ecosystem.config.cjs`. There is no database, no API
 key and no `.env`.
 
 ### Fly.io (alternative)

@@ -1,6 +1,10 @@
 /**
  * pm2 process config for the VPS.
  *
+ * `.cjs`, not `.js`: the root package.json sets `"type": "module"`, so a plain
+ * `.js` file here would be parsed as ESM and pm2's `module.exports` would throw
+ * on load. The explicit CommonJS extension is what makes pm2 able to read it.
+ *
  * `exec_mode: "fork"` with a single instance is NOT a performance oversight —
  * it is a correctness requirement. Colyseus keeps rooms in the process's own
  * memory (LocalPresence + LocalDriver), so under cluster mode a room created
