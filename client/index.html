@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, user-scalable=no"
+    />
+    <meta name="theme-color" content="#0e1116" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/icon-192.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="apple-mobile-web-app-title" content="StickStakes" />
+    <title>StickStakes</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <canvas id="stage"></canvas>
+
+    <!-- Roster: who's in, lives, damage, rounds taken. -->
+    <ul id="roster"></ul>
+
+    <!-- Top band: round label and the round tracker. -->
+    <div id="banner" hidden>
+      <span id="banner-round"></span>
+      <span id="banner-pips" aria-hidden="true"></span>
+      <span id="banner-note"></span>
+    </div>
+
+    <!-- Centred beat: "3 · 2 · 1 · FIGHT" and the round result. -->
+    <div id="bigtext" hidden>
+      <div id="bigtext-main"></div>
+      <div id="bigtext-sub"></div>
+    </div>
+
+    <!-- Lobby: your fighter, the code to read across the table, and the setup. -->
+    <div id="lobby" hidden>
+      <div id="lobby-scroll">
+        <header id="lobby-hero">
+          <div class="hero-stage">
+            <canvas id="lobby-fighter" class="fighter-canvas"></canvas>
+          </div>
+          <div class="hero-meta">
+            <span class="hero-name" id="lobby-hero-name">You</span>
+            <span class="hero-tag" id="lobby-hero-tag">picking a look…</span>
+          </div>
+        </header>
+
+        <div id="lobby-code">
+          <div class="lobby-code-main">
+            <span class="label">Room code</span>
+            <strong id="lobby-code-value">····</strong>
+          </div>
+          <button id="lobby-share" type="button">
+            <span aria-hidden="true">↗</span> Share
+          </button>
+        </div>
+
+        <div id="lobby-setup">
+          <div class="setup-field">
+            <span class="label">Rounds</span>
+            <div id="setup-rounds" class="segmented"></div>
+          </div>
+          <div class="setup-field">
+            <span class="label">Lives</span>
+            <div id="setup-lives" class="segmented"></div>
+          </div>
+          <div class="setup-field setup-map-field">
+            <span class="label">World</span>
+            <div id="setup-map" class="map-grid"></div>
+            <span id="setup-map-blurb" class="setup-hint"></span>
+          </div>
+          <div class="setup-field setup-stake-field">
+            <span class="label">Playing for</span>
+            <input id="setup-stake" type="text" maxlength="80" placeholder="Loser buys lunch" />
+          </div>
+        </div>
+
+        <div class="wardrobe wardrobe-row" id="lobby-wardrobe">
+          <span class="label">Your fighter</span>
+          <div class="strip swatches" id="lobby-wardrobe-colors"></div>
+          <div class="strip chips" id="lobby-wardrobe-hats"></div>
+        </div>
+      </div>
+
+      <div id="lobby-foot">
+        <button id="lobby-start" type="button" class="lobby-cta is-start" hidden>Start match</button>
+        <button id="lobby-ready" type="button" class="lobby-cta">Ready up</button>
+        <p id="lobby-foot-meta">
+          <span id="lobby-ready-count"></span>
+          <span id="lobby-hint"></span>
+        </p>
+      </div>
+    </div>
+
+    <!-- Match over: who pays, and what for. -->
+    <div id="result" hidden>
+      <div id="result-scroll">
+        <div id="result-hero">
+          <div class="hero-stage hero-stage-win">
+            <canvas id="result-fighter" class="fighter-canvas"></canvas>
+          </div>
+          <div id="result-title"></div>
+          <div id="result-stake"></div>
+        </div>
+        <ol id="result-standings"></ol>
+        <div id="result-split">
+          <label for="split-total">Split the bill</label>
+          <input id="split-total" type="number" inputmode="decimal" min="0" step="0.01" placeholder="total" />
+          <span id="split-out"></span>
+        </div>
+      </div>
+      <div class="result-actions">
+        <button id="result-again" type="button" class="primary" hidden>Play again</button>
+        <button id="result-share" type="button">Share result</button>
+      </div>
+    </div>
+
+    <div id="hud"><span id="status"></span></div>
+    <button id="mute" type="button" aria-label="Sound" aria-pressed="false">🔊</button>
+    <button id="fullscreen" type="button" aria-label="Fullscreen">⛶</button>
+
+    <!-- Shown over the fight when a phone is held upright. -->
+    <div id="rotate" hidden>
+      <div class="rotate-phone" aria-hidden="true"><span class="rotate-phone-screen"></span></div>
+      <p class="rotate-title">Turn your phone sideways</p>
+      <p class="rotate-sub">StickStakes fights in landscape.</p>
+    </div>
+
+    <!-- Shown first; everything above is inert until this is dismissed. -->
+    <div id="landing">
+      <form id="landing-card" autocomplete="off">
+        <div class="landing-head">
+          <h1>StickStakes</h1>
+          <p class="tagline">Settle it with stickmen.</p>
+        </div>
+
+        <div class="landing-hero">
+          <div class="hero-stage">
+            <canvas id="landing-fighter" class="fighter-canvas"></canvas>
+          </div>
+        </div>
+
+        <label class="field">
+          <span class="label">Your name</span>
+          <input id="landing-name" type="text" maxlength="12" placeholder="Dimitar" />
+        </label>
+
+        <div class="wardrobe" id="landing-wardrobe">
+          <div class="field">
+            <span class="label">Colour</span>
+            <div class="swatches" id="wardrobe-colors"></div>
+          </div>
+          <div class="field">
+            <span class="label">Hat</span>
+            <div class="chips" id="wardrobe-hats"></div>
+          </div>
+        </div>
+
+        <button id="landing-create" type="button" class="primary">Create a game</button>
+
+        <div class="divider"><span>or join one</span></div>
+
+        <div class="join-row">
+          <input
+            id="landing-code"
+            type="text"
+            maxlength="4"
+            placeholder="CODE"
+            inputmode="text"
+            autocapitalize="characters"
+            spellcheck="false"
+          />
+          <button id="landing-join" type="submit">Join</button>
+        </div>
+
+        <p id="landing-error" role="alert"></p>
+      </form>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
