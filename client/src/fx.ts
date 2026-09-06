@@ -86,6 +86,28 @@ export function createFx(audio: Audio) {
     peakParticles: 0,
   };
   const particles: Particle[] = [];
+  /**
+   * Retired particle objects, kept for reuse. Combat spawns sparks in bursts
+   * and the buffer is capped, so in the steady state every `spawn` pulls an
+   * object off here instead of allocating one — no per-spark garbage on exactly
+   * the phones that can least afford a GC pause mid-fight.
+   */
+  const pool: Particle[] = [];
+
+  function blankParticle(): Particle {
+    return { x: 0, y: 0, vx: 0, vy: 0, life: 0, maxLife: 0, size: 0, color: "#fff", gravity: 0 };
+  }
+
+  /** Drop `particles[i]` in O(1) by swapping the tail in — order is irrelevant
+   *  for particles — and return the freed object to the pool. */
+  function retire(i: number): void {
+    const p = particles[i]!;
+    const last = particles.length - 1;
+    if (i !== last) particles[i] = particles[last]!;
+    particles.pop();
+    pool.push(p);
+  }
+
   let trauma = 0;
   let shakeX = 0;
   let shakeY = 0;
@@ -114,23 +136,24 @@ export function createFx(audio: Audio) {
     const centre = options.angle ?? -Math.PI / 2; // default: upward
     const wanted = calm ? Math.ceil(count * 0.3) : count;
     for (let i = 0; i < wanted; i++) {
-      // Oldest particle wins the slot: a cap means a big brawl degrades
-      // gracefully instead of dropping frames on a mid-range phone.
-      if (particles.length >= MAX_PARTICLES) particles.shift();
+      // At the cap, drop the oldest to make room — O(1) swap-remove, order
+      // doesn't matter — so a big brawl degrades gracefully instead of dropping
+      // frames on a mid-range phone.
+      if (particles.length >= MAX_PARTICLES) retire(0);
       const angle = centre + spread * (Math.random() * 2 - 1);
       const velocity = speed * (0.45 + Math.random() * 0.75);
       const life = (options.life ?? 0.5) * (0.6 + Math.random() * 0.8);
-      particles.push({
-        x,
-        y,
-        vx: Math.cos(angle) * velocity,
-        vy: Math.sin(angle) * velocity,
-        life,
-        maxLife: life,
-        size: (options.size ?? 2.6) * (0.7 + Math.random() * 0.8),
-        color,
-        gravity: options.gravity ?? PARTICLE_GRAVITY,
-      });
+      const p = pool.pop() ?? blankParticle();
+      p.x = x;
+      p.y = y;
+      p.vx = Math.cos(angle) * velocity;
+      p.vy = Math.sin(angle) * velocity;
+      p.life = life;
+      p.maxLife = life;
+      p.size = (options.size ?? 2.6) * (0.7 + Math.random() * 0.8);
+      p.color = color;
+      p.gravity = options.gravity ?? PARTICLE_GRAVITY;
+      particles.push(p);
     }
   }
 
@@ -149,18 +172,20 @@ export function createFx(audio: Audio) {
 
     stats.peakParticles = Math.max(stats.peakParticles, particles.length);
 
+    // Reverse walk so a swap-remove only ever moves an already-visited tail
+    // element into the current slot.
     for (let i = particles.length - 1; i >= 0; i--) {
       const p = particles[i]!;
       p.life -= dt;
       if (p.life <= 0) {
-        particles.splice(i, 1);
+        retire(i);
         continue;
       }
       p.vy += p.gravity * dt;
       p.x += p.vx * dt;
       p.y += p.vy * dt;
       // Off the bottom of the world is gone for good; no point simulating it.
-      if (p.y > ARENA_HEIGHT + 80 || p.x < -80 || p.x > ARENA_WIDTH + 80) particles.splice(i, 1);
+      if (p.y > ARENA_HEIGHT + 80 || p.x < -80 || p.x > ARENA_WIDTH + 80) retire(i);
     }
   }
 

@@ -1,0 +1,121 @@
+name: Dev tunnel
+
+# Manually spins up the dev stack (Colyseus server + Vite client) on a
+# GitHub-hosted runner and publishes it through a Cloudflare quick tunnel, so
+# anyone can get a shareable https://*.trycloudflare.com link for a live
+# playtest without deploying anywhere. Quick tunnels need a runner with normal
+# outbound internet access, which is why this lives in Actions rather than a
+# sandboxed dev session.
+#
+# Run it from the Actions tab: pick this workflow, choose the branch to run
+# from, and (optionally) how long to keep the tunnel open. The link appears in
+# the run's job summary a few seconds after the job starts, and stays live
+# until the job's timer runs out or you cancel the run.
+
+on:
+  workflow_dispatch:
+    inputs:
+      duration_minutes:
+        description: "How long to keep the tunnel open, in minutes (job hard-caps at 350)"
+        required: false
+        default: "180"
+
+jobs:
+  tunnel:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: ".nvmrc"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build shared
+        run: npm run build:shared
+
+      - name: Start the Colyseus server
+        run: nohup npm --workspace @stickstakes/server run dev > /tmp/server.log 2>&1 &
+
+      - name: Start the Vite client
+        run: nohup npm --workspace @stickstakes/client run dev > /tmp/client.log 2>&1 &
+
+      - name: Wait for the client to come up
+        run: |
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:5173 > /dev/null && exit 0
+            sleep 1
+          done
+          echo "client never came up on :5173" >&2
+          cat /tmp/client.log >&2
+          exit 1
+
+      - name: Install cloudflared
+        run: |
+          curl -fL -o /usr/local/bin/cloudflared \
+            https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+          chmod +x /usr/local/bin/cloudflared
+
+      - name: Start the tunnel and capture its URL
+        id: tunnel
+        env:
+          DURATION_MINUTES: ${{ inputs.duration_minutes }}
+        run: |
+          nohup cloudflared tunnel --url http://localhost:5173 > /tmp/tunnel.log 2>&1 &
+          echo $! > /tmp/tunnel.pid
+
+          URL=""
+          for i in $(seq 1 30); do
+            URL=$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' /tmp/tunnel.log | head -n1 || true)
+            [ -n "$URL" ] && break
+            sleep 2
+          done
+
+          if [ -z "$URL" ]; then
+            echo "cloudflared never printed a tunnel URL" >&2
+            cat /tmp/tunnel.log >&2
+            exit 1
+          fi
+
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "## 🔗 StickStakes is live"
+            echo
+            echo "**$URL**"
+            echo
+            echo "Open it on a phone (or anywhere) to join. This link dies when this"
+            echo "job ends — either after $DURATION_MINUTES minutes, or sooner if"
+            echo "you cancel the run."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "TUNNEL URL: $URL"
+
+      - name: Keep the tunnel open
+        env:
+          DURATION_MINUTES: ${{ inputs.duration_minutes }}
+        run: |
+          minutes="$DURATION_MINUTES"
+          # Clamp to the job's own timeout so this step can't outlive the run.
+          [ "$minutes" -gt 350 ] 2>/dev/null && minutes=350
+          [ -z "$minutes" ] && minutes=180
+
+          end=$(( $(date +%s) + minutes * 60 ))
+          while [ "$(date +%s)" -lt "$end" ]; do
+            # Surface a dead tunnel or dead client quickly instead of idling
+            # silently for the rest of the job.
+            if ! kill -0 "$(cat /tmp/tunnel.pid)" 2>/dev/null; then
+              echo "cloudflared exited early:" >&2
+              cat /tmp/tunnel.log >&2
+              exit 1
+            fi
+            curl -sf http://localhost:5173 > /dev/null || {
+              echo "client stopped responding on :5173" >&2
+              cat /tmp/client.log >&2
+              exit 1
+            }
+            sleep 30
+          done

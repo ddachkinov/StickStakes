@@ -22,14 +22,29 @@ export function createClient(): Client {
 
 export type ArenaRoom = Room<unknown, ArenaState>;
 
+/** Cosmetic pick sent with the join; the server validates every field. */
+export interface Wardrobe {
+  color: string;
+  hat: string;
+}
+
 /** Start a new game. The server assigns the room a 4-letter code as its id. */
-export async function createArena(name: string): Promise<ArenaRoom> {
-  return createClient().create<ArenaState>(ROOM_NAME, { name }, ArenaState);
+export async function createArena(
+  name: string,
+  wardrobe?: Wardrobe,
+  client: Client = createClient(),
+): Promise<ArenaRoom> {
+  return client.create<ArenaState>(ROOM_NAME, { name, ...wardrobe }, ArenaState);
 }
 
 /** Join an existing game by its code. */
-export async function joinArenaByCode(code: string, name: string): Promise<ArenaRoom> {
-  return createClient().joinById<ArenaState>(code, { name }, ArenaState);
+export async function joinArenaByCode(
+  code: string,
+  name: string,
+  wardrobe?: Wardrobe,
+  client: Client = createClient(),
+): Promise<ArenaRoom> {
+  return client.joinById<ArenaState>(code, { name, ...wardrobe }, ArenaState);
 }
 
 /**

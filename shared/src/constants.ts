@@ -94,6 +94,23 @@ export const MAX_DAMAGE = 999;
 /** Launch speed = base + damage × scaling, in px/s. */
 export const KNOCKBACK_BASE = 200;
 export const KNOCKBACK_SCALING = 4.2;
+/**
+ * Hard ceiling on the launch speed a single hit may impart. Without it,
+ * `KNOCKBACK_BASE + MAX_DAMAGE * KNOCKBACK_SCALING` is ~4400 px/s — 147 px in
+ * one 30 Hz tick, enough to tunnel clean through the thinnest shipped solid
+ * before the discrete collision pass ever sees an overlap. Capped here, and
+ * `stepBody` substeps the integration on top, so a body always meets what it
+ * hits. Sits well above any realistic in-game launch (a fresh fighter at
+ * ~120 % is nowhere near), so it only ever clips the pathological tail.
+ */
+export const MAX_KNOCKBACK = 900;
+/**
+ * The narrowest dimension any solid (shipped or a plausible community map) is
+ * assumed to have — the 12–14 px beams on Towers/Foundry are the current
+ * floor. `stepBody` splits a move so no substep advances more than half this,
+ * which is what actually guarantees no tunnelling regardless of speed.
+ */
+export const MIN_SOLID_EXTENT = 12;
 /** Every hit pops you up a little, and harder hits pop higher. */
 export const KNOCKBACK_LIFT = 90;
 export const KNOCKBACK_UP_RATIO = 0.42;
@@ -163,8 +180,25 @@ export const GROUND_FRICTION = 2200;
 export const AIR_FRICTION = 260;
 export const GRAVITY = 1900;
 export const JUMP_VELOCITY = -640;
-/** Releasing jump early cuts the rise, so taps are short hops. */
-export const JUMP_CUT_MULTIPLIER = 0.45;
+/**
+ * Releasing jump early cuts the rise, so taps are short hops. Applied exactly
+ * once, on the release edge (see `stepBody`). Retuned down from 0.45 when that
+ * became a true single shot instead of a per-tick compounding one — a lone
+ * 0.45 cut is a far bigger hop than the old decay curve settled at.
+ */
+export const JUMP_CUT_MULTIPLIER = 0.3;
+/**
+ * How far a full-hold jump lifts the feet, in arena units — the hard ceiling on
+ * a climbable step. It falls out of `JUMP_VELOCITY`, `GRAVITY` and the fixed
+ * timestep (semi-implicit Euler, so a touch under the `v²/2g` analytic value);
+ * measured, not derived, at ~97. Map tiers should sit well below it — aim for
+ * ≤ 84 so a jump with any horizontal offset still lands — and `test/maps.mjs`
+ * simulates real jumps between every platform pair and fails if one can't be
+ * reached.
+ */
+export const MAX_JUMP_RISE = 97;
+/** The comfortable step a map should design to, leaving headroom for a gap that is also horizontal. */
+export const COMFORTABLE_JUMP_RISE = 84;
 export const MAX_FALL_SPEED = 1300;
 /** Ticks of grace after walking off a ledge during which jump still works. */
 export const COYOTE_TICKS = 4;
@@ -174,7 +208,8 @@ export const JUMP_BUFFER_TICKS = 5;
 /**
  * Stickman colours, handed out in join order. Ten of them, ordered so the
  * earliest joiners get the most distinguishable pairs — with ten sticks in a
- * scrum, telling yours apart is the whole game.
+ * scrum, telling yours apart is the whole game. This is only the *default*:
+ * a player can override it from the wardrobe (see below).
  */
 export const PLAYER_COLORS: readonly string[] = [
   "#ff5a5f", // red
@@ -188,3 +223,77 @@ export const PLAYER_COLORS: readonly string[] = [
   "#b0bec5", // slate
   "#a3e635", // lime
 ];
+
+/**
+ * ------------------------------------------------------------------ wardrobe
+ *
+ * Player customisation. Purely cosmetic — none of this reaches `stepBody`, so
+ * a skin or a hat can never change a hitbox or the physics. Both the picked
+ * colour and the hat id ride in on the join options and can be changed later
+ * with a `customize` message; the server validates every value against the
+ * lists here rather than trusting the client.
+ */
+
+/** The swatches the wardrobe offers. A custom hex picker sits alongside these. */
+export const WARDROBE_COLORS: readonly string[] = [
+  "#ff5a5f", // red
+  "#ff9f45", // orange
+  "#ffd166", // amber
+  "#a3e635", // lime
+  "#8ce99a", // green
+  "#6ee7d7", // teal
+  "#4cc9f0", // cyan
+  "#5b8cff", // blue
+  "#c792ea", // violet
+  "#f78fb3", // pink
+  "#e0a458", // tan
+  "#b0bec5", // slate
+  "#8d99ae", // steel
+  "#2ec4b6", // jade
+  "#f4f4f5", // white
+  "#4a4e69", // ink
+];
+
+/** A six-digit `#rrggbb`. The wardrobe's custom picker only ever emits this. */
+const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
+
+/** Is this a colour we're willing to put on the wire and draw? */
+export function isHexColor(value: unknown): value is string {
+  return typeof value === "string" && HEX_COLOR.test(value);
+}
+
+/** A valid `#rrggbb` (lower-cased), or the fallback if the input is junk. */
+export function normalizeHexColor(value: unknown, fallback: string): string {
+  return isHexColor(value) ? value.toLowerCase() : fallback;
+}
+
+export interface HatOption {
+  id: string;
+  label: string;
+}
+
+/**
+ * The hats. `none` is a real option and the default. Each id is drawn by the
+ * client renderer; the server only ever stores and validates the id.
+ */
+export const HATS: readonly HatOption[] = [
+  { id: "none", label: "None" },
+  { id: "top", label: "Top hat" },
+  { id: "cap", label: "Cap" },
+  { id: "beanie", label: "Beanie" },
+  { id: "band", label: "Headband" },
+  { id: "crown", label: "Crown" },
+  { id: "party", label: "Party" },
+  { id: "halo", label: "Halo" },
+  { id: "horns", label: "Horns" },
+  { id: "antenna", label: "Antenna" },
+];
+
+export const DEFAULT_HAT = "none";
+
+const HAT_IDS: ReadonlySet<string> = new Set(HATS.map((hat) => hat.id));
+
+/** Is this one of the hats we know how to draw? */
+export function isHatId(value: unknown): value is string {
+  return typeof value === "string" && HAT_IDS.has(value);
+}
