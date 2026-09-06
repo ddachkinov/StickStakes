@@ -1,4 +1,4 @@
-import type { ArenaState, Player } from "@stickstakes/shared";
+import { MIN_PLAYERS, type ArenaState, type Player } from "@stickstakes/shared";
 import { createFighterShowcase } from "./figure.js";
 
 /**
@@ -15,6 +15,8 @@ export interface ResultPanel {
   hide(): void;
   onShare(handler: (text: string) => void): void;
   onPlayAgain(handler: () => void): void;
+  /** Fires when the player toggles ready on the result card; carries the new value. */
+  onReady(handler: (ready: boolean) => void): void;
 }
 
 interface Standing {
@@ -52,6 +54,8 @@ export function createResultPanel(root: ParentNode = document): ResultPanel {
   const listEl = root.querySelector<HTMLOListElement>("#result-standings")!;
   const shareBtn = root.querySelector<HTMLButtonElement>("#result-share")!;
   const againBtn = root.querySelector<HTMLButtonElement>("#result-again")!;
+  const readyBtn = root.querySelector<HTMLButtonElement>("#result-ready")!;
+  const readyCountEl = root.querySelector<HTMLElement>("#result-ready-count")!;
   const totalEl = root.querySelector<HTMLInputElement>("#split-total")!;
   const splitOutEl = root.querySelector<HTMLElement>("#split-out")!;
   const fighterCanvas = root.querySelector<HTMLCanvasElement>("#result-fighter")!;
@@ -60,10 +64,14 @@ export function createResultPanel(root: ParentNode = document): ResultPanel {
 
   let shareHandler: ((text: string) => void) | undefined;
   let againHandler: (() => void) | undefined;
+  let readyHandler: ((ready: boolean) => void) | undefined;
   let current: { state: ArenaState; selfId: string } | undefined;
   let lastKey = "";
+  /** Last ready state the server showed us, so the button can toggle it. */
+  let selfReady = false;
 
   againBtn.addEventListener("click", () => againHandler?.());
+  readyBtn.addEventListener("click", () => readyHandler?.(!selfReady));
 
   shareBtn.addEventListener("click", () => {
     if (!current) return;
@@ -89,9 +97,34 @@ export function createResultPanel(root: ParentNode = document): ResultPanel {
     update(state, selfId) {
       el.hidden = false;
       current = { state, selfId };
+
+      // Ready-up lives on this card too. Ready flags are cleared at match end,
+      // so "Play again" is dead until the room re-readies — and `matchOver`
+      // shows nothing but this card, so without a ready control here there is
+      // no way to send one. Recomputed every frame, ahead of the standings
+      // short-circuit below.
+      const self = state.players.get(selfId);
+      selfReady = self?.ready ?? false;
+      readyBtn.textContent = selfReady ? "Ready ✓" : "Ready up";
+      readyBtn.classList.toggle("is-on", selfReady);
+
+      const active = [...state.players.values()].filter(
+        (p) => !p.spectating && p.connected,
+      );
+      const readyCount = active.filter((p) => p.ready).length;
+      const allReady = active.length > 0 && readyCount === active.length;
+      const isHost = state.hostId === selfId;
+      const solo = active.length < MIN_PLAYERS;
+
       // The card sits over the banner, so the replay button has to live here
-      // or the host simply cannot reach it.
-      againBtn.hidden = state.hostId !== selfId;
+      // or the host simply cannot reach it. Disabled, not hidden, until the
+      // room has readied up — so it reads as "waiting" rather than "gone".
+      againBtn.hidden = !isHost;
+      againBtn.disabled = !allReady;
+      againBtn.textContent = solo ? "Play solo again" : "Play again";
+      readyCountEl.textContent = allReady
+        ? "everyone's ready"
+        : `${readyCount}/${active.length} ready`;
 
       const winner = state.players.get(state.matchWinnerId);
       const rows = standings(state, selfId);
@@ -148,6 +181,9 @@ export function createResultPanel(root: ParentNode = document): ResultPanel {
     },
     onPlayAgain(handler) {
       againHandler = handler;
+    },
+    onReady(handler) {
+      readyHandler = handler;
     },
   };
 }

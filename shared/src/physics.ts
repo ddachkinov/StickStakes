@@ -12,6 +12,7 @@ import {
   JUMP_CUT_MULTIPLIER,
   JUMP_VELOCITY,
   MAX_FALL_SPEED,
+  MIN_SOLID_EXTENT,
   MOVE_SPEED,
   PLAYER_HEIGHT,
   PLAYER_WIDTH,
@@ -21,11 +22,13 @@ import { activeMap, type Solid, type StepWorld } from "./maps.js";
 import { NEUTRAL_INPUT, type InputIntent, type PlayerBody } from "./types.js";
 
 /**
- * How far below a one-way platform's top face the feet may already be, last
- * tick, and still be snapped onto it. Absorbs a single fast frame without
- * letting you grab a ledge you've clearly dropped past.
+ * The floor on the one-way catch window: even a near-stationary drop onto a
+ * platform gets this much slack so a body resting on the face isn't shaken
+ * loose by rounding. Above this the window grows with the body's speed — but
+ * only ever to one substep of travel (see `resolveVertical`), so it forgives a
+ * single frame's overshoot and never yanks up a body that has dropped past.
  */
-const ONE_WAY_GRACE = 8;
+const ONE_WAY_GRACE = 2;
 
 type SpawnList = readonly { x: number; y: number }[];
 
@@ -77,14 +80,30 @@ export function copyBody(from: PlayerBody, into: PlayerBody): void {
   into.stunned = from.stunned;
 }
 
-export function bodyAabb(body: PlayerBody): Rect {
-  return {
-    x: body.x - PLAYER_WIDTH / 2,
-    y: body.y - PLAYER_HEIGHT,
-    width: PLAYER_WIDTH,
-    height: PLAYER_HEIGHT,
-  };
+/**
+ * The body's collision box. Pass `out` to fill an existing rect instead of
+ * allocating — the hot paths (`stepBody`'s substep loop, the server's per-tick
+ * hazard and hit passes) do, so a 30 Hz room streams no garbage from here. The
+ * default keeps the old allocating shape for tests and one-off callers.
+ */
+export function bodyAabb(
+  body: PlayerBody,
+  out: Rect = { x: 0, y: 0, width: 0, height: 0 },
+): Rect {
+  out.x = body.x - PLAYER_WIDTH / 2;
+  out.y = body.y - PLAYER_HEIGHT;
+  out.width = PLAYER_WIDTH;
+  out.height = PLAYER_HEIGHT;
+  return out;
 }
+
+/**
+ * Scratch boxes for the resolve pass. `stepBody` runs synchronously on one
+ * thread and the two resolvers never overlap in a call, so a module-level rect
+ * each is safe and keeps the substep loop allocation-free.
+ */
+const HORIZ_BOX: Rect = { x: 0, y: 0, width: 0, height: 0 };
+const VERT_BOX: Rect = { x: 0, y: 0, width: 0, height: 0 };
 
 /** Axis-aligned overlap test. Exported so the server can run hit detection. */
 export function overlapsRect(a: Rect, b: Rect): boolean {
@@ -148,11 +167,17 @@ export function stepBody(
     body.grounded = false;
     body.jumping = true;
   }
-  // Short hop: let go on the way up and the rise is cut. Gated on `jumping`,
-  // because hitstun forces `cmd` neutral — without the gate every knocked-up
-  // player would be read as "released jump" and have their pop cut away on
-  // each tick until it was gone.
-  if (body.jumping && !cmd.jump && body.vy < 0) body.vy *= JUMP_CUT_MULTIPLIER;
+  // Short hop: cut the rise ONCE, on the tick the player releases a jump they
+  // asked for. Edge-triggered — `jumpHeld` was true last tick, `cmd.jump` is
+  // false now. The old test (`!cmd.jump`) re-fired every tick the button stayed
+  // up, so JUMP_CUT_MULTIPLIER compounded (0.45 → 0.2 → 0.09 …) and killed the
+  // rise in ~3 ticks instead of scaling it. Still gated on `jumping` so hitstun
+  // (which forces `cmd` neutral) can't be read as a release and eat knockback.
+  const releasedJump = body.jumping && body.jumpHeld && !cmd.jump;
+  if (releasedJump && body.vy < 0) {
+    body.vy *= JUMP_CUT_MULTIPLIER;
+    body.jumping = false; // the pop is spent; never cut the same jump twice
+  }
   body.jumpHeld = cmd.jump;
 
   // --- vertical: gravity, capped ---
@@ -160,18 +185,29 @@ export function stepBody(
   // Past the apex the jump is over; anything later is a fall or a hit.
   if (body.vy >= 0) body.jumping = false;
 
-  // --- integrate and resolve, one axis at a time ---
-  body.x += body.vx * dt;
-  resolveHorizontal(body, solids);
+  // --- integrate and resolve, substepped so a fast body never skips a solid ---
+  // One 30 Hz tick of hard knockback moves a body ~150 px; the thinnest solids
+  // are ~12 px. Discrete "integrate the whole tick, then push out of overlap"
+  // would step clean over them. Split the move so no substep travels more than
+  // half MIN_SOLID_EXTENT and resolve after each — CCD without the sweep maths.
+  const travel = Math.hypot(body.vx, body.vy) * dt;
+  const substeps = Math.max(1, Math.ceil(travel / (MIN_SOLID_EXTENT / 2)));
+  const subDt = dt / substeps;
 
   const wasGrounded = body.grounded;
-  // Feet before this tick's vertical move — a one-way platform only catches a
-  // body that was at or above its top face, so you rise through it and land on
-  // the way down.
-  const prevFeet = body.y;
-  body.y += body.vy * dt;
   body.grounded = false;
-  resolveVertical(body, solids, prevFeet);
+
+  for (let s = 0; s < substeps; s++) {
+    body.x += body.vx * subDt;
+    resolveHorizontal(body, solids);
+
+    // Feet before this substep's vertical move — a one-way platform only
+    // catches a body at or above its top face, so you rise through it and
+    // land on the way down.
+    const prevFeet = body.y;
+    body.y += body.vy * subDt;
+    resolveVertical(body, solids, prevFeet, subDt);
+  }
 
   if (body.grounded) body.coyote = COYOTE_TICKS;
   else if (body.coyote > 0) body.coyote -= 1;
@@ -183,7 +219,7 @@ export function stepBody(
 }
 
 function resolveHorizontal(body: PlayerBody, solids: readonly Solid[]): void {
-  const box = bodyAabb(body);
+  const box = bodyAabb(body, HORIZ_BOX);
   for (const solid of solids) {
     // One-way platforms never block sideways — you can run straight through
     // the thin beam and only meet it under your feet.
@@ -203,16 +239,27 @@ function resolveVertical(
   body: PlayerBody,
   solids: readonly Solid[],
   prevFeet: number,
+  dt: number,
 ): void {
-  const box = bodyAabb(body);
+  const box = bodyAabb(body, VERT_BOX);
+  // Decide the direction ONCE, before any solid zeroes `body.vy`. Resolving
+  // against `body.vy` inside the loop meant that after the first landing every
+  // later overlapping solid also read as "falling", so a body wedged under a
+  // beam got snapped down onto the solid above it.
+  const falling = body.vy >= 0;
+  // One-way catch window: one substep of vertical travel (never less than the
+  // rounding floor). Forgives a single frame's overshoot; never re-grabs a
+  // body that has genuinely dropped below the face.
+  const oneWayGrace = Math.max(ONE_WAY_GRACE, Math.abs(body.vy) * dt);
+
   for (const solid of solids) {
     if (!overlapsRect(box, solid)) continue;
 
     if (solid.oneWay) {
       // Only ever catches a descending body whose feet were above the top face
-      // last tick; rising through it, or already past it, does nothing.
-      if (body.vy < 0) continue;
-      if (prevFeet > solid.y + ONE_WAY_GRACE) continue;
+      // last substep; rising through it, or already past it, does nothing.
+      if (!falling) continue;
+      if (prevFeet > solid.y + oneWayGrace) continue;
       body.y = solid.y;
       body.vy = 0;
       body.grounded = true;
@@ -220,7 +267,7 @@ function resolveVertical(
       continue;
     }
 
-    if (body.vy >= 0) {
+    if (falling) {
       // Falling onto the top face.
       body.y = solid.y;
       body.vy = 0;
@@ -248,13 +295,15 @@ export function respawnBody(
  * than on the server so the client can draw it while tuning, and so a future
  * client-side hit prediction reads the exact same geometry.
  */
-export function attackHitbox(body: PlayerBody): Rect {
+export function attackHitbox(
+  body: PlayerBody,
+  out: Rect = { x: 0, y: 0, width: 0, height: 0 },
+): Rect {
   const forward = body.facing >= 0;
   const nose = body.x + (forward ? PLAYER_WIDTH * 0.3 : -PLAYER_WIDTH * 0.3);
-  return {
-    x: forward ? nose : nose - ATTACK_REACH,
-    y: body.y - PLAYER_HEIGHT * 0.9,
-    width: ATTACK_REACH,
-    height: ATTACK_BOX_HEIGHT,
-  };
+  out.x = forward ? nose : nose - ATTACK_REACH;
+  out.y = body.y - PLAYER_HEIGHT * 0.9;
+  out.width = ATTACK_REACH;
+  out.height = ATTACK_BOX_HEIGHT;
+  return out;
 }

@@ -72,6 +72,8 @@ export interface Stickman {
   damage: number;
   /** In hitstun — drawn white, so a hit reads instantly. */
   stunned: boolean;
+  /** Socket dropped, seat held for a reconnect — drawn faded. */
+  disconnected?: boolean;
 }
 
 /**
@@ -153,6 +155,38 @@ export function createRenderer(canvas: HTMLCanvasElement) {
   let cssWidth = 0;
   let cssHeight = 0;
 
+  /**
+   * Per-frame allocation was the biggest avoidable cost in here. Every one of
+   * these is built from immutable map data, so it is built once and kept:
+   *
+   *  - gradients keyed on the object (or the map) they decorate — `createLinear`
+   *    / `createRadialGradient` is one of the pricier canvas calls, and none of
+   *    these depend on canvas size (they are all in arena units);
+   *  - scatter fields (`starfield`, `skyline`, `rain`, `embers`) whose seeded
+   *    PRNG produced the same points every frame — now generated once into a
+   *    typed array, with only the animated offset applied per frame.
+   *
+   * `WeakMap` so a map the player never revisits lets its caches go.
+   */
+  const bandGradients = new WeakMap<ParallaxObject, CanvasGradient>();
+  const moonGlowGradients = new WeakMap<ParallaxObject, CanvasGradient>();
+  const skyGradients = new WeakMap<WorldMap, CanvasGradient>();
+  const zoneFills = new WeakMap<
+    ControlZone,
+    { readonly lit: CanvasGradient; readonly off: CanvasGradient }
+  >();
+  /** `[sx, sy, r, alpha]` per star. */
+  const starFields = new WeakMap<ParallaxObject, Float32Array>();
+  /** `[bx, by, w, h]` runs for the buildings, then the same for lit windows. */
+  const skylineFields = new WeakMap<
+    ParallaxObject,
+    { readonly buildings: Float32Array; readonly windows: Float32Array }
+  >();
+  /** `[baseX, baseY]` per drop; the fall offset is applied per frame. */
+  const rainFields = new WeakMap<ParallaxObject, Float32Array>();
+  /** `[baseX, baseY, r, alphaFactor]` per ember; drift + rise applied per frame. */
+  const emberFields = new WeakMap<ParallaxObject, Float32Array>();
+
   function resize(): void {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     cssWidth = window.innerWidth;
@@ -205,9 +239,13 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     switch (o.shape) {
       case "band": {
         if (o.accent && o.accent !== o.color) {
-          const g = ctx.createLinearGradient(0, o.y, 0, o.y + o.h);
-          g.addColorStop(0, o.color);
-          g.addColorStop(1, o.accent);
+          let g = bandGradients.get(o);
+          if (!g) {
+            g = ctx.createLinearGradient(0, o.y, 0, o.y + o.h);
+            g.addColorStop(0, o.color);
+            g.addColorStop(1, o.accent);
+            bandGradients.set(o, g);
+          }
           ctx.fillStyle = g;
         }
         ctx.fillRect(o.x, o.y, o.w, o.h);
@@ -215,9 +253,13 @@ export function createRenderer(canvas: HTMLCanvasElement) {
       }
       case "moon": {
         const r = o.w / 2;
-        const glow = ctx.createRadialGradient(o.x, o.y, r * 0.4, o.x, o.y, r * 2.4);
-        glow.addColorStop(0, o.color);
-        glow.addColorStop(1, "rgba(0,0,0,0)");
+        let glow = moonGlowGradients.get(o);
+        if (!glow) {
+          glow = ctx.createRadialGradient(o.x, o.y, r * 0.4, o.x, o.y, r * 2.4);
+          glow.addColorStop(0, o.color);
+          glow.addColorStop(1, "rgba(0,0,0,0)");
+          moonGlowGradients.set(o, glow);
+        }
         ctx.globalAlpha = (o.alpha ?? 1) * 0.4;
         ctx.fillStyle = glow;
         ctx.beginPath();
@@ -321,33 +363,62 @@ export function createRenderer(canvas: HTMLCanvasElement) {
         break;
       }
       case "skyline": {
-        const rnd = seeded(o.seed ?? 1);
-        let bx = o.x;
-        while (bx < o.x + o.w) {
-          const bw = 40 + rnd() * 70;
-          const bh = o.h * (0.35 + rnd() * 0.65);
-          ctx.fillStyle = o.color;
-          ctx.fillRect(bx, o.y - bh, bw - 6, bh);
-          if (o.accent && o.accent !== o.color) {
-            ctx.fillStyle = o.accent;
-            for (let wy = o.y - bh + 10; wy < o.y - 8; wy += 16) {
-              for (let wx = bx + 6; wx < bx + bw - 12; wx += 12) {
-                if (rnd() > 0.62) ctx.fillRect(wx, wy, 4, 6);
+        let field = skylineFields.get(o);
+        if (!field) {
+          const rnd = seeded(o.seed ?? 1);
+          const buildings: number[] = [];
+          const windows: number[] = [];
+          let bx = o.x;
+          while (bx < o.x + o.w) {
+            const bw = 40 + rnd() * 70;
+            const bh = o.h * (0.35 + rnd() * 0.65);
+            buildings.push(bx, o.y - bh, bw - 6, bh);
+            if (o.accent && o.accent !== o.color) {
+              for (let wy = o.y - bh + 10; wy < o.y - 8; wy += 16) {
+                for (let wx = bx + 6; wx < bx + bw - 12; wx += 12) {
+                  if (rnd() > 0.62) windows.push(wx, wy, 4, 6);
+                }
               }
             }
+            bx += bw;
           }
-          bx += bw;
+          field = {
+            buildings: new Float32Array(buildings),
+            windows: new Float32Array(windows),
+          };
+          skylineFields.set(o, field);
+        }
+        const { buildings, windows } = field;
+        ctx.fillStyle = o.color;
+        for (let i = 0; i < buildings.length; i += 4) {
+          ctx.fillRect(buildings[i]!, buildings[i + 1]!, buildings[i + 2]!, buildings[i + 3]!);
+        }
+        if (windows.length > 0) {
+          ctx.fillStyle = o.accent!;
+          for (let i = 0; i < windows.length; i += 4) {
+            ctx.fillRect(windows[i]!, windows[i + 1]!, windows[i + 2]!, windows[i + 3]!);
+          }
         }
         break;
       }
       case "starfield": {
-        const rnd = seeded(o.seed ?? 1);
+        let pts = starFields.get(o);
+        if (!pts) {
+          const rnd = seeded(o.seed ?? 1);
+          pts = new Float32Array(90 * 4);
+          for (let i = 0; i < 90; i++) {
+            pts[i * 4] = o.x + rnd() * o.w;
+            pts[i * 4 + 1] = o.y + rnd() * o.h;
+            pts[i * 4 + 2] = rnd() * 1.4 + 0.3;
+            pts[i * 4 + 3] = 0.3 + rnd() * 0.7;
+          }
+          starFields.set(o, pts);
+        }
+        const base = o.alpha ?? 1;
         for (let i = 0; i < 90; i++) {
-          const sx = o.x + rnd() * o.w;
-          const sy = o.y + rnd() * o.h;
-          const r = rnd() * 1.4 + 0.3;
-          ctx.globalAlpha = (o.alpha ?? 1) * (0.3 + rnd() * 0.7);
-          ctx.fillRect(sx, sy, r, r);
+          const size = pts[i * 4 + 2]!;
+          ctx.globalAlpha = base * pts[i * 4 + 3]!;
+          ctx.fillRect(pts[i * 4]!, pts[i * 4 + 1]!, size, size);
         }
         break;
       }
@@ -422,13 +493,23 @@ export function createRenderer(canvas: HTMLCanvasElement) {
         break;
       }
       case "rain": {
-        const rnd = seeded(o.seed ?? 1);
+        let pts = rainFields.get(o);
+        if (!pts) {
+          const rnd = seeded(o.seed ?? 1);
+          pts = new Float32Array(70 * 2);
+          for (let i = 0; i < 70; i++) {
+            pts[i * 2] = o.x + rnd() * o.w; // wrap + drift applied per frame
+            pts[i * 2 + 1] = rnd() * o.h; // fall offset applied per frame
+          }
+          rainFields.set(o, pts);
+        }
         const fall = t * 620;
+        const drift = t * (o.drift ?? 0);
         ctx.lineWidth = 1.4;
         ctx.beginPath();
         for (let i = 0; i < 70; i++) {
-          const rx = wrapX(o.x + rnd() * o.w + t * (o.drift ?? 0), 60);
-          const ry = (rnd() * o.h + fall) % o.h;
+          const rx = wrapX(pts[i * 2]! + drift, 60);
+          const ry = (pts[i * 2 + 1]! + fall) % o.h;
           ctx.moveTo(rx, ry);
           ctx.lineTo(rx - 3, ry + 16);
         }
@@ -436,15 +517,26 @@ export function createRenderer(canvas: HTMLCanvasElement) {
         break;
       }
       case "embers": {
-        const rnd = seeded(o.seed ?? 1);
+        let pts = emberFields.get(o);
+        if (!pts) {
+          const rnd = seeded(o.seed ?? 1);
+          pts = new Float32Array(46 * 4);
+          for (let i = 0; i < 46; i++) {
+            pts[i * 4] = o.x + rnd() * o.w;
+            pts[i * 4 + 1] = rnd() * o.h;
+            pts[i * 4 + 2] = rnd() * 1.8 + 0.6;
+            pts[i * 4 + 3] = 0.4 + rnd() * 0.6;
+          }
+          emberFields.set(o, pts);
+        }
         const rise = t * 46;
+        const base = o.alpha ?? 1;
         for (let i = 0; i < 46; i++) {
-          const ex = wrapX(o.x + rnd() * o.w + Math.sin(t + i) * 12, 40);
-          const ey = (o.h - ((rnd() * o.h + rise) % o.h));
-          const r = rnd() * 1.8 + 0.6;
-          ctx.globalAlpha = (o.alpha ?? 1) * (0.4 + rnd() * 0.6);
+          const ex = wrapX(pts[i * 4]! + Math.sin(t + i) * 12, 40);
+          const ey = o.h - ((pts[i * 4 + 1]! + rise) % o.h);
+          ctx.globalAlpha = base * pts[i * 4 + 3]!;
           ctx.beginPath();
-          ctx.arc(ex, ey, r, 0, Math.PI * 2);
+          ctx.arc(ex, ey, pts[i * 4 + 2]!, 0, Math.PI * 2);
           ctx.fill();
         }
         break;
@@ -555,9 +647,13 @@ export function createRenderer(canvas: HTMLCanvasElement) {
 
   /** Sky + background parallax + the solid stage. Call inside beginWorld. */
   function drawWorldBack(map: WorldMap, cam: WorldCamera): void {
-    const sky = ctx.createLinearGradient(0, 0, 0, ARENA_HEIGHT);
-    sky.addColorStop(0, map.sky[0]);
-    sky.addColorStop(1, map.sky[1]);
+    let sky = skyGradients.get(map);
+    if (!sky) {
+      sky = ctx.createLinearGradient(0, 0, 0, ARENA_HEIGHT);
+      sky.addColorStop(0, map.sky[0]);
+      sky.addColorStop(1, map.sky[1]);
+      skyGradients.set(map, sky);
+    }
     ctx.fillStyle = sky;
     ctx.fillRect(-60, -60, ARENA_WIDTH + 120, ARENA_HEIGHT + 120);
 
@@ -579,7 +675,7 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     ctx.restore();
   }
 
-  function drawStickman(man: Stickman): void {
+  function drawStickman(man: Stickman, t: number): void {
     const { x, y, facing, color } = man;
     const headR = PLAYER_WIDTH * 0.32;
     const headY = y - PLAYER_HEIGHT + headR;
@@ -601,7 +697,16 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     ctx.save();
 
     // Fresh-spawn i-frames read as a fast flicker — the universal shorthand.
-    if (man.invulnerable) ctx.globalAlpha = 0.35 + 0.65 * Math.abs(Math.sin(Date.now() / 70));
+    // `t` is the render loop's own clock (seconds); using it instead of
+    // `Date.now()` drops a call from the per-stickman draw path and keeps every
+    // fighter's flicker sampled at the same instant within a frame.
+    if (man.invulnerable) {
+      ctx.globalAlpha = 0.35 + 0.65 * Math.abs(Math.sin(t * (1000 / 70)));
+    }
+
+    // A dropped player, seat held for a reconnect: faded to half, so the table
+    // can see who's gone without the fighter vanishing.
+    if (man.disconnected) ctx.globalAlpha *= 0.4;
 
     // Hitstun blanks the stickman white: you have been hit and you are not
     // driving until it clears.
@@ -797,21 +902,31 @@ export function createRenderer(canvas: HTMLCanvasElement) {
       ctx.shadowColor = "rgba(0,0,0,0.35)";
       ctx.shadowBlur = 12;
       ctx.shadowOffsetY = 3;
-      const fill = ctx.createRadialGradient(
-        zone.cx,
-        zone.cy - zone.r * 0.45,
-        zone.r * 0.15,
-        zone.cx,
-        zone.cy,
-        zone.r,
-      );
-      if (lit) {
-        fill.addColorStop(0, "rgba(255,122,126,0.36)");
-        fill.addColorStop(1, "rgba(255,122,126,0.14)");
-      } else {
-        fill.addColorStop(0, "rgba(255,255,255,0.12)");
-        fill.addColorStop(1, "rgba(255,255,255,0.05)");
+      // Both button fills are fixed once `layout()` has placed the zone — build
+      // the lit/unlit pair once and reuse. A fresh `zones` array from `layout()`
+      // is a fresh key, so a resize rebuilds them.
+      let fills = zoneFills.get(zone);
+      if (!fills) {
+        const make = (a: string, b: string): CanvasGradient => {
+          const g = ctx.createRadialGradient(
+            zone.cx,
+            zone.cy - zone.r * 0.45,
+            zone.r * 0.15,
+            zone.cx,
+            zone.cy,
+            zone.r,
+          );
+          g.addColorStop(0, a);
+          g.addColorStop(1, b);
+          return g;
+        };
+        fills = {
+          lit: make("rgba(255,122,126,0.36)", "rgba(255,122,126,0.14)"),
+          off: make("rgba(255,255,255,0.12)", "rgba(255,255,255,0.05)"),
+        };
+        zoneFills.set(zone, fills);
       }
+      const fill = lit ? fills.lit : fills.off;
       ctx.beginPath();
       ctx.arc(zone.cx, zone.cy, zone.r, 0, Math.PI * 2);
       ctx.fillStyle = fill;

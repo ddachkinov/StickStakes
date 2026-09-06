@@ -66,6 +66,13 @@ export function createHud(root: ParentNode = document): Hud {
   let lastBigMain = "";
   let lastRosterKey = "";
   let lastPipsKey = "";
+  let lastBannerRound = "";
+  let lastBannerNote = "";
+
+  /** The HUD sits in the 60 fps loop; skip a write that wouldn't change anything. */
+  function setHidden(node: HTMLElement, value: boolean): void {
+    if (node.hidden !== value) node.hidden = value;
+  }
   /** Set when countdown flips to playing, so "FIGHT!" can linger a moment. */
   let fightUntil = 0;
   let lastPhase: MatchPhase | "" = "";
@@ -86,7 +93,7 @@ export function createHud(root: ParentNode = document): Hud {
     // the banner underneath them would only collide with the roster, so it
     // stays down until there is a fight to label.
     if (phase === "lobby" || phase === "matchOver") {
-      bannerEl.hidden = true;
+      setHidden(bannerEl, true);
       return;
     }
 
@@ -112,9 +119,15 @@ export function createHud(root: ParentNode = document): Hud {
         break;
     }
 
-    roundEl.textContent = round;
-    noteEl.textContent = note;
-    bannerEl.hidden = false;
+    if (round !== lastBannerRound) {
+      lastBannerRound = round;
+      roundEl.textContent = round;
+    }
+    if (note !== lastBannerNote) {
+      lastBannerNote = note;
+      noteEl.textContent = note;
+    }
+    setHidden(bannerEl, false);
 
     // Round tracker: one dot per round in the match, lit up to the current one.
     const pipsKey = showPips ? `${state.round}/${state.totalRounds}` : "";

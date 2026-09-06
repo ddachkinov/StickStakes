@@ -19,9 +19,52 @@
  * Pure node, no server — the thing under test is `shared/`. Run it any time:
  * `npm run test:maps`. Exits non-zero on the first stranded surface.
  */
-import { PLAYER_WIDTH, WORLD_MAPS, stepBody } from "@stickstakes/shared";
+import {
+  MAX_KNOCKBACK,
+  NEUTRAL_INPUT,
+  PLAYER_WIDTH,
+  WORLD_MAPS,
+  stepBody,
+} from "@stickstakes/shared";
 
 const FIXED_DT = 1 / 30;
+
+/**
+ * Fire a body at a solid's side at the hardest knockback the game can produce
+ * and check the discrete collision pass actually stops it. A single 30 Hz tick
+ * at `MAX_KNOCKBACK` covers ~30 px, so anything thinner than that would be
+ * skipped clean over without `stepBody`'s substepping. Only the first few ticks
+ * matter — the body crosses the solid's whole width in one or two — so gravity
+ * has no time to drop it out of the solid's band and cause a false pass.
+ */
+function tunnelsThrough(world, solid) {
+  for (const dir of [1, -1]) {
+    const nearFace = dir > 0 ? solid.x : solid.x + solid.width;
+    const farFace = dir > 0 ? solid.x + solid.width : solid.x;
+    const body = {
+      x: nearFace - dir * (PLAYER_WIDTH / 2 + 4),
+      // Feet at the bottom face: the 56 px body then spans the solid upward.
+      y: solid.y + solid.height,
+      vx: dir * MAX_KNOCKBACK,
+      vy: 0,
+      facing: dir,
+      grounded: false,
+      coyote: 0,
+      jumpBuffer: 0,
+      jumpHeld: false,
+      jumping: false,
+      frozen: false,
+      stunned: false,
+    };
+    for (let t = 0; t < 4; t++) {
+      stepBody(body, NEUTRAL_INPUT, FIXED_DT, world);
+      const centrePastFar =
+        dir > 0 ? body.x - PLAYER_WIDTH / 2 > farFace : body.x + PLAYER_WIDTH / 2 < farFace;
+      if (centrePastFar) return true;
+    }
+  }
+  return false;
+}
 
 /**
  * Can a body standing on `from` get onto `to`? Sweeps launch positions along
@@ -148,6 +191,18 @@ for (const map of WORLD_MAPS) {
     strandedFromFloor
       .map((s) => `${s.kind ?? "solid"} (${s.x},${s.y}), ${Math.round(floorY - s.y)}px up`)
       .join(", "),
+  );
+
+  // No tunnelling: a body launched at every blocking solid at MAX_KNOCKBACK has
+  // to be stopped by it. One-way platforms are meant to be passed through
+  // sideways, so they're exempt.
+  const world = { solids: map.solids, killPlaneY: map.killPlaneY };
+  const blockers = map.solids.filter((s) => !s.oneWay);
+  const tunnelled = blockers.filter((s) => tunnelsThrough(world, s));
+  check(
+    `${map.name}: no solid tunnels at MAX_KNOCKBACK (${blockers.length} blockers)`,
+    tunnelled.length === 0,
+    tunnelled.map((s) => `${s.kind ?? "solid"} ${s.width}×${s.height} @(${s.x},${s.y})`).join(", "),
   );
 }
 

@@ -94,6 +94,23 @@ export const MAX_DAMAGE = 999;
 /** Launch speed = base + damage × scaling, in px/s. */
 export const KNOCKBACK_BASE = 200;
 export const KNOCKBACK_SCALING = 4.2;
+/**
+ * Hard ceiling on the launch speed a single hit may impart. Without it,
+ * `KNOCKBACK_BASE + MAX_DAMAGE * KNOCKBACK_SCALING` is ~4400 px/s — 147 px in
+ * one 30 Hz tick, enough to tunnel clean through the thinnest shipped solid
+ * before the discrete collision pass ever sees an overlap. Capped here, and
+ * `stepBody` substeps the integration on top, so a body always meets what it
+ * hits. Sits well above any realistic in-game launch (a fresh fighter at
+ * ~120 % is nowhere near), so it only ever clips the pathological tail.
+ */
+export const MAX_KNOCKBACK = 900;
+/**
+ * The narrowest dimension any solid (shipped or a plausible community map) is
+ * assumed to have — the 12–14 px beams on Towers/Foundry are the current
+ * floor. `stepBody` splits a move so no substep advances more than half this,
+ * which is what actually guarantees no tunnelling regardless of speed.
+ */
+export const MIN_SOLID_EXTENT = 12;
 /** Every hit pops you up a little, and harder hits pop higher. */
 export const KNOCKBACK_LIFT = 90;
 export const KNOCKBACK_UP_RATIO = 0.42;
@@ -163,8 +180,13 @@ export const GROUND_FRICTION = 2200;
 export const AIR_FRICTION = 260;
 export const GRAVITY = 1900;
 export const JUMP_VELOCITY = -640;
-/** Releasing jump early cuts the rise, so taps are short hops. */
-export const JUMP_CUT_MULTIPLIER = 0.45;
+/**
+ * Releasing jump early cuts the rise, so taps are short hops. Applied exactly
+ * once, on the release edge (see `stepBody`). Retuned down from 0.45 when that
+ * became a true single shot instead of a per-tick compounding one — a lone
+ * 0.45 cut is a far bigger hop than the old decay curve settled at.
+ */
+export const JUMP_CUT_MULTIPLIER = 0.3;
 /**
  * How far a full-hold jump lifts the feet, in arena units — the hard ceiling on
  * a climbable step. It falls out of `JUMP_VELOCITY`, `GRAVITY` and the fixed

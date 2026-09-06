@@ -1,4 +1,6 @@
-import { Room, matchMaker, type Client, logger } from "@colyseus/core";
+import { randomInt } from "node:crypto";
+import { performance } from "node:perf_hooks";
+import { Room, type Client, logger } from "@colyseus/core";
 import {
   ArenaState,
   ATTACK_ACTIVE_MS,
@@ -21,6 +23,7 @@ import {
   LIVES_OPTIONS,
   LIVES_PER_ROUND,
   MAX_DAMAGE,
+  MAX_KNOCKBACK,
   MAX_NAME_LENGTH,
   MAX_STAKE_LENGTH,
   MAX_PLAYERS,
@@ -34,7 +37,6 @@ import {
   ROUND_OVER_MS,
   ROUND_WINS_TO_TAKE_MATCH,
   SPAWN_IFRAME_MS,
-  SPAWN_POINTS,
   TICK_RATE,
   TOTAL_ROUNDS,
   attackHitbox,
@@ -44,13 +46,24 @@ import {
   isHexColor,
   isMapId,
   msToTicks,
+  NEUTRAL_INPUT,
   overlapsRect,
   roundWinsToTakeMatch,
   respawnBody,
   spawnBody,
   stepBody,
+  type Rect,
   type WorldMap,
 } from "@stickstakes/shared";
+
+/**
+ * Room codes held by a live room in THIS process. One process owns every room
+ * (`LocalPresence` + `LocalDriver`, per the README), so this set IS the
+ * authority — a synchronous check-and-insert with no `await` to race across,
+ * and no matchmaker round trip on the room-creation path. A multi-node
+ * deployment would move this to Redis (`SETNX`), per the README's scaling note.
+ */
+const claimedRoomCodes = new Set<string>();
 
 /** Host-only match setup message. Every field is validated server-side. */
 interface Configure {
@@ -88,8 +101,21 @@ export class ArenaRoom extends Room<{ state: ArenaState; input: FightInput }> {
    */
   inputs = this.defineInput(FightInput);
 
-  /** Join order, so colours and spawn points are handed out predictably. */
-  private nextSlot = 0;
+  /**
+   * Spawn/colour slot in use by each session. A slot is the index into the
+   * map's spawn list and `PLAYER_COLORS`. Released in `onLeave` and reused, so
+   * an evening of drops and rejoins can't wrap a monotonic counter and seat
+   * two players on the same spawn point in the same colour.
+   */
+  private slots = new Map<string, number>();
+
+  /**
+   * Last time (ms) each client sent each throttled message type. Every accepted
+   * `ready` / `rename` / `customize` / `configure` dirties synced state, which
+   * Colyseus then re-encodes and broadcasts to the whole room — so a client
+   * spamming them can saturate everyone's bandwidth. Cleared in `onLeave`.
+   */
+  private lastMessageAt = new Map<string, Map<string, number>>();
 
   /**
    * How many fighters the current round started with. A round that began with
@@ -104,10 +130,31 @@ export class ArenaRoom extends Room<{ state: ArenaState; input: FightInput }> {
    */
   private hitThisSwing = new Map<string, Set<string>>();
 
-  async onCreate() {
+  /**
+   * Reusable AABBs for the per-tick hazard and hit passes. The geometry
+   * helpers fill one of these instead of returning a fresh object, so a busy
+   * room streams no short-lived garbage from collision detection.
+   */
+  private readonly hazardBox: Rect = { x: 0, y: 0, width: 0, height: 0 };
+  private readonly attackBox: Rect = { x: 0, y: 0, width: 0, height: 0 };
+  private readonly targetBox: Rect = { x: 0, y: 0, width: 0, height: 0 };
+
+  /** Tick-budget watch: a 30 Hz loop slipping under budget reads as lag on the
+   *  client and is invisible from there, so count overruns and log them. */
+  private readonly tickBudgetMs = 1000 / TICK_RATE;
+  private tickOverruns = 0;
+  private lastOverrunLogAt = 0;
+
+  /** This room's world, memoised on `mapId` so `this.map` is a field read
+   *  rather than a `Map` lookup on every access (it is read per player,
+   *  per tick). Invalidated the moment the host changes the map. */
+  private cachedMapId = "";
+  private cachedMap: WorldMap = getMap(DEFAULT_MAP_ID);
+
+  onCreate() {
     // A short, speakable room code instead of Colyseus's generated id, so the
     // host can read it across a table. Replacing `roomId` here is supported.
-    this.roomId = await this.reserveRoomCode();
+    this.roomId = this.reserveRoomCode();
 
     this.setState(new ArenaState());
     this.state.maxPlayers = MAX_PLAYERS;
@@ -121,11 +168,22 @@ export class ArenaRoom extends Room<{ state: ArenaState; input: FightInput }> {
     // Only the host can drive the match forward. Everyone else's press is a
     // no-op — never trust the client to tell us who it is.
     this.onMessage("startMatch", (client) => {
-      if (client.sessionId !== this.state.hostId) return;
-      if (this.state.phase !== "lobby" && this.state.phase !== "matchOver") return;
+      if (client.sessionId !== this.state.hostId) {
+        client.send("startRefused", { reason: "notHost" });
+        return;
+      }
+      if (this.state.phase !== "lobby" && this.state.phase !== "matchOver") {
+        client.send("startRefused", { reason: "wrongPhase" });
+        return;
+      }
       if (this.state.players.size === 0) return;
-      // Everyone in the room has to have readied up first — the host included.
-      if (!this.everyoneReady()) return;
+      // Every active (non-spectating, connected) player has to have readied up
+      // first — the host included. A silent no-op here is exactly how a dead
+      // "Play again" button hid for so long; say why instead.
+      if (!this.everyoneReady()) {
+        client.send("startRefused", { reason: "notEveryoneReady" });
+        return;
+      }
       this.resetMatch();
       this.startCountdown();
     });
@@ -139,8 +197,10 @@ export class ArenaRoom extends Room<{ state: ArenaState; input: FightInput }> {
       if (this.state.phase !== "lobby" && this.state.phase !== "matchOver") return;
       const player = this.state.players.get(client.sessionId);
       if (!player) return;
-      player.ready =
+      if (this.throttled(client.sessionId, "ready", 200)) return;
+      const next =
         typeof message?.ready === "boolean" ? message.ready : !player.ready;
+      if (next !== player.ready) player.ready = next; // no broadcast on a no-op
     });
 
     /**
@@ -151,24 +211,32 @@ export class ArenaRoom extends Room<{ state: ArenaState; input: FightInput }> {
     this.onMessage("configure", (client, message: Configure) => {
       if (client.sessionId !== this.state.hostId) return;
       if (this.state.phase !== "lobby" && this.state.phase !== "matchOver") return;
+      if (this.throttled(client.sessionId, "configure", 150)) return;
 
+      // Each write is guarded on an actual change — an unchanged value must not
+      // dirty the schema and trigger a room-wide re-broadcast.
       const rounds = Number(message?.totalRounds);
-      if (ROUND_OPTIONS.includes(rounds)) {
+      if (ROUND_OPTIONS.includes(rounds) && rounds !== this.state.totalRounds) {
         this.state.totalRounds = rounds;
         this.state.roundWinsToTakeMatch = roundWinsToTakeMatch(rounds);
       }
 
       const lives = Number(message?.livesPerRound);
-      if (LIVES_OPTIONS.includes(lives)) this.state.livesPerRound = lives;
+      if (LIVES_OPTIONS.includes(lives) && lives !== this.state.livesPerRound) {
+        this.state.livesPerRound = lives;
+      }
 
       // The world. Validated against the shipped list; an unknown id is dropped
       // and the current map stays. Only settable in the lobby / on match-over,
       // like every other rule, so the geometry never shifts mid-round.
-      if (isMapId(message?.mapId)) this.state.mapId = message.mapId;
+      if (isMapId(message?.mapId) && message.mapId !== this.state.mapId) {
+        this.state.mapId = message.mapId;
+      }
 
       if (typeof message?.stake === "string") {
         const stake = message.stake.trim().slice(0, MAX_STAKE_LENGTH);
-        this.state.stake = stake || DEFAULT_STAKE;
+        const next = stake || DEFAULT_STAKE;
+        if (next !== this.state.stake) this.state.stake = next;
       }
     });
 
@@ -176,8 +244,9 @@ export class ArenaRoom extends Room<{ state: ArenaState; input: FightInput }> {
     this.onMessage("rename", (client, message: { name?: string }) => {
       const player = this.state.players.get(client.sessionId);
       if (!player) return;
+      if (this.throttled(client.sessionId, "rename", 150)) return;
       const name = String(message?.name ?? "").trim().slice(0, MAX_NAME_LENGTH);
-      if (name) player.name = name;
+      if (name && name !== player.name) player.name = name;
     });
 
     /**
@@ -188,17 +257,41 @@ export class ArenaRoom extends Room<{ state: ArenaState; input: FightInput }> {
     this.onMessage("customize", (client, message: Customize) => {
       const player = this.state.players.get(client.sessionId);
       if (!player) return;
-      if (isHexColor(message?.color)) player.color = message.color.toLowerCase();
-      if (isHatId(message?.hat)) player.hat = message.hat;
+      if (this.throttled(client.sessionId, "customize", 150)) return;
+      if (isHexColor(message?.color)) {
+        const color = message.color.toLowerCase();
+        if (color !== player.color) player.color = color;
+      }
+      if (isHatId(message?.hat) && message.hat !== player.hat) player.hat = message.hat;
     });
 
     this.setFixedTimestep((ctx) => {
+      // A room everyone has left keeps running the full physics + phase loop
+      // until `autoDispose` fires — nothing to simulate, so skip it.
+      if (this.state.players.size === 0) return;
+
+      const startedAt = performance.now();
+
       this.state.tick++;
       this.stepPlayers(ctx.dt);
       // Hits resolve after every body has moved, so a tick sees one consistent
       // world rather than positions half-updated in map order.
       this.resolveHits();
       this.updatePhase();
+
+      const elapsed = performance.now() - startedAt;
+      if (elapsed > this.tickBudgetMs) {
+        this.tickOverruns++;
+        const now = Date.now();
+        if (now - this.lastOverrunLogAt > 5000) {
+          this.lastOverrunLogAt = now;
+          logger.warn(
+            `[arena] room ${this.roomId} tick ${elapsed.toFixed(1)}ms over ` +
+              `${this.tickBudgetMs.toFixed(1)}ms budget — ${this.tickOverruns} overrun(s) so far, ` +
+              `${this.state.players.size} player(s)`,
+          );
+        }
+      }
     }, TICK_RATE);
 
     logger.info(`[arena] room ${this.roomId} up at ${TICK_RATE}Hz`);
@@ -207,33 +300,74 @@ export class ArenaRoom extends Room<{ state: ArenaState; input: FightInput }> {
   /**
    * Pick a room code nobody is using. Collisions are vanishingly rare at
    * 24^4, but "vanishingly rare" across a whole evening of a busy restaurant
-   * is still a person joining a stranger's fight, so check and retry.
+   * is still a person joining a stranger's fight — so check the in-process set
+   * of live codes and retry. O(1) and `await`-free: the check-and-insert can't
+   * be interleaved with another room's, so the TOCTOU race is closed, and the
+   * room-creation path no longer waits on up to a dozen matchmaker round trips.
    */
-  private async reserveRoomCode(): Promise<string> {
-    for (let attempt = 0; attempt < 12; attempt++) {
+  private reserveRoomCode(): string {
+    for (let attempt = 0; attempt < 16; attempt++) {
+      // `crypto.randomInt` rather than `Math.random`: the code is the only
+      // access control on a room, and a predictable PRNG over a 331k keyspace
+      // makes enumeration cheap.
       const code = Array.from(
         { length: ROOM_CODE_LENGTH },
-        () => ROOM_CODE_ALPHABET[Math.floor(Math.random() * ROOM_CODE_ALPHABET.length)],
+        () => ROOM_CODE_ALPHABET[randomInt(ROOM_CODE_ALPHABET.length)],
       ).join("");
 
-      const taken = await matchMaker.query({ roomId: code });
-      if (taken.length === 0) return code;
+      if (claimedRoomCodes.has(code)) continue;
+      claimedRoomCodes.add(code); // released in onDispose
+      return code;
     }
     // Astronomically unlikely; fall back to the generated id rather than fail.
     logger.warn("[arena] could not find a free room code, keeping the default");
     return this.roomId;
   }
 
+  /**
+   * True if this client sent `kind` less than `everyMs` ago — the caller then
+   * drops the message. Per-client, per-type; the maps are cleared in `onLeave`.
+   */
+  private throttled(sessionId: string, kind: string, everyMs: number): boolean {
+    let perKind = this.lastMessageAt.get(sessionId);
+    if (!perKind) {
+      perKind = new Map();
+      this.lastMessageAt.set(sessionId, perKind);
+    }
+    const now = Date.now();
+    if (now - (perKind.get(kind) ?? 0) < everyMs) return true;
+    perKind.set(kind, now);
+    return false;
+  }
+
+  /** Lowest spawn/colour slot no one in the room is using right now. */
+  private takeSlot(sessionId: string): number {
+    const count = Math.max(this.map.spawns.length, 1);
+    const used = new Set(this.slots.values());
+    let slot = 0;
+    while (slot < count - 1 && used.has(slot)) slot++;
+    // More players than the map has spawns: wrap, and accept the double-up.
+    if (used.has(slot)) slot = this.slots.size % count;
+    this.slots.set(sessionId, slot);
+    return slot;
+  }
+
   // ---------------------------------------------------------------- players
 
   /** This room's world. Passed explicitly into the shared step so that many
-   *  rooms on one process can run different maps without a shared global. */
+   *  rooms on one process can run different maps without a shared global.
+   *  Memoised on `mapId`: read per player per tick, so the `Map` lookup only
+   *  runs when the host actually switches the map. */
   private get map(): WorldMap {
-    return getMap(this.state.mapId);
+    if (this.state.mapId !== this.cachedMapId) {
+      this.cachedMapId = this.state.mapId;
+      this.cachedMap = getMap(this.state.mapId);
+    }
+    return this.cachedMap;
   }
 
   onJoin(client: Client, options?: { name?: string; color?: string; hat?: string }) {
-    const slot = this.nextSlot++ % SPAWN_POINTS.length;
+    const slot = this.takeSlot(client.sessionId);
     // A match already in progress: sit this round out, join at the next one.
     const midMatch = this.state.phase !== "lobby";
 
@@ -260,18 +394,47 @@ export class ArenaRoom extends Room<{ state: ArenaState; input: FightInput }> {
     );
   }
 
+  /**
+   * A non-consented drop — a phone locking, Wi-Fi handing off to cellular, a
+   * tunnel. Hold the fighter (greyed client-side, still simulated so it can
+   * still fall) and let them slot back into the same session. If the window
+   * elapses, Colyseus follows up with `onLeave`, which does the removal.
+   */
+  async onDrop(client: Client) {
+    const player = this.state.players.get(client.sessionId);
+    if (player) player.connected = false;
+    try {
+      await this.allowReconnection(client, 20);
+    } catch {
+      // Reconnection window elapsed; `onLeave` will clean up.
+    }
+  }
+
+  onReconnect(client: Client) {
+    const player = this.state.players.get(client.sessionId);
+    if (player) player.connected = true;
+    logger.info(`[arena] ${player?.name ?? client.sessionId} reconnected`);
+  }
+
   onLeave(client: Client) {
-    this.state.players.delete(client.sessionId);
-    this.hitThisSwing.delete(client.sessionId);
+    this.removePlayer(client.sessionId);
+  }
+
+  private removePlayer(sessionId: string) {
+    this.state.players.delete(sessionId);
+    this.hitThisSwing.delete(sessionId);
+    this.slots.delete(sessionId);
+    this.lastMessageAt.delete(sessionId);
 
     // Hand the host role to whoever is still here, so the match isn't stuck.
-    if (this.state.hostId === client.sessionId) {
+    if (this.state.hostId === sessionId) {
       this.state.hostId = this.state.players.keys().next().value ?? "";
     }
     // A round that just lost its last opponent is resolved by updatePhase().
   }
 
   onDispose() {
+    claimedRoomCodes.delete(this.roomId);
     logger.info(`[arena] room ${this.roomId} disposed`);
   }
 
@@ -286,11 +449,18 @@ export class ArenaRoom extends Room<{ state: ArenaState; input: FightInput }> {
 
       // Exactly one input per player per step. Draining the buffer and applying
       // only the newest would ack inputs we never simulated, and the client's
-      // replay would then disagree with us. No input yet? Don't guess — wait.
-      const input = this.inputs.get(sessionId).next();
-      if (input === undefined) continue;
+      // replay would then disagree with us.
+      const buffered = this.inputs.get(sessionId).next();
 
-      this.tryAttack(sessionId, player, input.attack);
+      // No input this tick — a backgrounded tab, a phone waking, a throttled or
+      // dropped socket. Simulate with a NEUTRAL command anyway: gravity, the
+      // fall-off-the-world check and hazards must still apply, or a player can
+      // kill their network mid-jump and hang in the air indefinitely (and a
+      // hovering body never loses its last life, so the round never ends).
+      // Only the input *ack* is withheld — `.next()` above consumed nothing —
+      // so the client's replay stays in lock-step once frames resume.
+      const input = buffered ?? NEUTRAL_INPUT;
+      if (buffered !== undefined) this.tryAttack(sessionId, player, buffered.attack);
 
       // `player` is structurally a PlayerBody — same function the client runs.
       const fellOff = stepBody(player, input, dt, map);
@@ -322,7 +492,7 @@ export class ArenaRoom extends Room<{ state: ArenaState; input: FightInput }> {
   /** Is this body overlapping any of the current map's kill rectangles? */
   private touchesHazard(player: Player, map: WorldMap): boolean {
     if (map.hazards.length === 0) return false;
-    const box = bodyAabb(player);
+    const box = bodyAabb(player, this.hazardBox);
     for (const hazard of map.hazards) {
       if (overlapsRect(box, hazard)) return true;
     }
@@ -331,6 +501,10 @@ export class ArenaRoom extends Room<{ state: ArenaState; input: FightInput }> {
 
   /** Start a swing if the button is down and the last one has fully recovered. */
   private tryAttack(sessionId: string, player: Player, pressed: boolean) {
+    // Only during a live round. A lobby swing hurts no one (`resolveHits` is
+    // phase-gated) but it still animates, fires the swing SFX, and can carry a
+    // cooldown across the countdown into the first frames of the fight.
+    if (this.state.phase !== "playing") return;
     if (!pressed || player.frozen || player.stunned) return;
     const readyAt = player.attackUntilTick + msToTicks(ATTACK_RECOVERY_MS);
     if (this.state.tick < readyAt) return;
@@ -385,18 +559,27 @@ export class ArenaRoom extends Room<{ state: ArenaState; input: FightInput }> {
     for (const [attackerId, attacker] of this.state.players) {
       if (!this.isSwingActive(attacker)) continue;
 
-      const alreadyHit = this.hitThisSwing.get(attackerId);
-      const box = attackHitbox(attacker);
+      // The one-hit-per-target-per-swing set. Make it exist rather than
+      // optional-chaining every use: if the entry were ever missing (a future
+      // code path that sets `attackUntilTick` without going through
+      // `tryAttack`), `?.` would silently drop the guard and the hitbox would
+      // connect on every active tick — a fail-open bug.
+      let alreadyHit = this.hitThisSwing.get(attackerId);
+      if (!alreadyHit) {
+        alreadyHit = new Set();
+        this.hitThisSwing.set(attackerId, alreadyHit);
+      }
+      const box = attackHitbox(attacker, this.attackBox);
 
       for (const [targetId, target] of this.state.players) {
         if (targetId === attackerId) continue;
         // One hit per target per swing — otherwise the box connects on every
         // active tick and a single press would deal several hits.
-        if (alreadyHit?.has(targetId)) continue;
+        if (alreadyHit.has(targetId)) continue;
         if (!this.isHittable(target)) continue;
-        if (!overlapsRect(box, bodyAabb(target))) continue;
+        if (!overlapsRect(box, bodyAabb(target, this.targetBox))) continue;
 
-        alreadyHit?.add(targetId);
+        alreadyHit.add(targetId);
         this.applyHit(attacker, target);
       }
     }
@@ -405,11 +588,25 @@ export class ArenaRoom extends Room<{ state: ArenaState; input: FightInput }> {
   private applyHit(attacker: Player, target: Player) {
     target.damage = Math.min(MAX_DAMAGE, target.damage + HIT_DAMAGE);
 
-    // Launch away from the attacker; ties break toward where they're facing.
+    // Launch away from the attacker; a dead-on tie breaks toward where the
+    // attacker faces (`facing` is maintained as 1 | -1, so no zero case).
     const away =
-      target.x === attacker.x ? Math.sign(attacker.facing) || 1 : target.x < attacker.x ? -1 : 1;
+      target.x === attacker.x
+        ? attacker.facing >= 0
+          ? 1
+          : -1
+        : target.x < attacker.x
+          ? -1
+          : 1;
 
-    const power = KNOCKBACK_BASE + target.damage * KNOCKBACK_SCALING;
+    // Clamp the impulse. `KNOCKBACK_BASE + MAX_DAMAGE * KNOCKBACK_SCALING` is
+    // ~4400 px/s, which even with `stepBody`'s substepping is a needlessly
+    // violent launch; `MAX_KNOCKBACK` keeps it sane without changing anything
+    // at realistic damage.
+    const power = Math.min(
+      MAX_KNOCKBACK,
+      KNOCKBACK_BASE + target.damage * KNOCKBACK_SCALING,
+    );
     target.vx = away * power;
     target.vy = -(KNOCKBACK_LIFT + power * KNOCKBACK_UP_RATIO);
     target.grounded = false;
@@ -514,14 +711,26 @@ export class ArenaRoom extends Room<{ state: ArenaState; input: FightInput }> {
     // so one person on one phone can still test movement, death and respawn.
     if (this.roundStartedWith < MIN_PLAYERS) return;
 
-    const fighters = this.fighters();
-    if (fighters.length === 0) return; // everyone left; wait for dispose
+    // One pass, no arrays: this runs every tick during `playing`, and the old
+    // `Array.from(...).filter(...)` then `.filter()` again was two allocations
+    // a tick per room for a plain count.
+    let fighters = 0;
+    let standing = 0;
+    let lastStanding: [string, Player] | undefined;
+    for (const entry of this.state.players) {
+      if (entry[1].spectating) continue;
+      fighters++;
+      if (entry[1].lives > 0) {
+        standing++;
+        lastStanding = entry;
+      }
+    }
 
-    const standing = fighters.filter(([, p]) => p.lives > 0);
-    if (standing.length > 1) return;
+    if (fighters === 0) return; // everyone left; wait for dispose
+    if (standing > 1) return;
 
     // Exactly one left wins it; zero means a simultaneous KO — nobody scores.
-    this.endRound(standing[0]);
+    this.endRound(standing === 1 ? lastStanding : undefined);
   }
 
   private endRound(winner?: [string, Player]) {
@@ -569,13 +778,17 @@ export class ArenaRoom extends Room<{ state: ArenaState; input: FightInput }> {
     return Array.from(this.state.players.entries()).filter(([, p]) => !p.spectating);
   }
 
-  /** True once every player in the room has readied up (and there is one). */
+  /**
+   * True once every player who *can* ready up has. Spectators (joined
+   * mid-match) and briefly-disconnected players have no lobby UI to ready
+   * with, so counting them would let one badly-timed join or drop lock the
+   * room out of ever starting again.
+   */
   private everyoneReady(): boolean {
-    if (this.state.players.size === 0) return false;
-    for (const player of this.state.players.values()) {
-      if (!player.ready) return false;
-    }
-    return true;
+    const active = [...this.state.players.values()].filter(
+      (p) => !p.spectating && p.connected,
+    );
+    return active.length > 0 && active.every((p) => p.ready);
   }
 
   /** Session id of the first player to reach the round-win target, if any. */

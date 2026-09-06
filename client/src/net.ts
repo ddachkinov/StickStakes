@@ -29,8 +29,12 @@ export interface Wardrobe {
 }
 
 /** Start a new game. The server assigns the room a 4-letter code as its id. */
-export async function createArena(name: string, wardrobe?: Wardrobe): Promise<ArenaRoom> {
-  return createClient().create<ArenaState>(ROOM_NAME, { name, ...wardrobe }, ArenaState);
+export async function createArena(
+  name: string,
+  wardrobe?: Wardrobe,
+  client: Client = createClient(),
+): Promise<ArenaRoom> {
+  return client.create<ArenaState>(ROOM_NAME, { name, ...wardrobe }, ArenaState);
 }
 
 /** Join an existing game by its code. */
@@ -38,8 +42,9 @@ export async function joinArenaByCode(
   code: string,
   name: string,
   wardrobe?: Wardrobe,
+  client: Client = createClient(),
 ): Promise<ArenaRoom> {
-  return createClient().joinById<ArenaState>(code, { name, ...wardrobe }, ArenaState);
+  return client.joinById<ArenaState>(code, { name, ...wardrobe }, ArenaState);
 }
 
 /**

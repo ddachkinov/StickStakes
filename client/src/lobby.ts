@@ -203,27 +203,53 @@ export function createLobbyPanel(root: ParentNode = document): LobbyPanel {
     }
   }
 
+  /** Only write when the value actually moved — a lobby is a still screen. */
+  function setText(node: { textContent: string | null }, value: string): void {
+    if (node.textContent !== value) node.textContent = value;
+  }
+
+  /**
+   * Everything `update()` paints, folded into one string. The lobby is called
+   * from the 60 fps render loop but nothing on it moves between server patches,
+   * so an unchanged signature skips ~1000 DOM writes/sec (three
+   * `querySelectorAll` sweeps and a dozen `textContent` assignments) for a
+   * screen that looks identical.
+   */
+  let lastSig = "";
+
   return {
     update(state, selfId, code) {
       el.hidden = false;
+
+      const self = state.players.get(selfId);
+      let readyCount = 0;
+      for (const player of state.players.values()) if (player.ready) readyCount++;
+      const total = state.players.size;
+
+      const sig =
+        `${code}|${state.hostId === selfId}|${state.totalRounds}|${state.livesPerRound}|` +
+        `${state.mapId}|${state.stake}|${self?.color ?? ""}|${self?.hat ?? ""}|` +
+        `${self?.name ?? ""}|${self?.ready ?? false}|${readyCount}/${total}`;
+      if (sig === lastSig) return;
+      lastSig = sig;
+
       isHost = state.hostId === selfId;
 
       // Show what the server actually has for us — the panel is built before
       // the landing screen resolves, so its first paint can be stale.
-      const self = state.players.get(selfId);
       if (self) wardrobe.sync({ color: self.color, hat: self.hat });
 
       // Keep the hero fighter in step with the pick (touched → the player's
       // choice; untouched → whatever the server synced above).
       const look = wardrobe.value();
       showcase.set(look.color, look.hat);
-      heroNameEl.textContent = self?.name || "You";
+      setText(heroNameEl, self?.name || "You");
 
-      codeEl.textContent = code || "····";
+      setText(codeEl, code || "····");
       markSelected(roundsEl, state.totalRounds);
       markSelected(livesEl, state.livesPerRound);
       markSelected(mapEl, state.mapId);
-      mapBlurbEl.textContent = getMap(state.mapId).blurb;
+      setText(mapBlurbEl, getMap(state.mapId).blurb);
 
       // Never overwrite what the host is mid-way through typing.
       if (!editingStake && stakeEl.value !== state.stake) stakeEl.value = state.stake;
@@ -231,36 +257,37 @@ export function createLobbyPanel(root: ParentNode = document): LobbyPanel {
 
       // Ready state: reflect the server's truth, and count the room.
       selfReady = self?.ready ?? false;
-      readyBtn.textContent = selfReady ? "Ready ✓" : "Ready up";
+      setText(readyBtn, selfReady ? "Ready ✓" : "Ready up");
       readyBtn.classList.toggle("is-on", selfReady);
 
-      let readyCount = 0;
-      for (const player of state.players.values()) if (player.ready) readyCount++;
-      const total = state.players.size;
       const allReady = total > 0 && readyCount === total;
       const solo = total < MIN_PLAYERS;
-      readyCountEl.textContent = allReady
-        ? "everyone's ready"
-        : `${readyCount}/${total} ready`;
+      setText(
+        readyCountEl,
+        allReady ? "everyone's ready" : `${readyCount}/${total} ready`,
+      );
 
       // The host's go button lives here, not in the banner — the banner is
       // covered by this panel on a phone. Shows only once the whole room
       // (host included) has readied up.
       const canStart = isHost && allReady;
       startBtn.hidden = !canStart;
-      startBtn.textContent = solo ? "Start solo" : "Start match";
+      setText(startBtn, solo ? "Start solo" : "Start match");
 
-      heroTagEl.textContent = isHost ? "you're the host" : "you're in";
+      setText(heroTagEl, isHost ? "you're the host" : "you're in");
 
-      hintEl.textContent = isHost
-        ? allReady
-          ? solo
-            ? "Flying solo — start whenever."
-            : "Everyone's ready — start when you are."
-          : "Share the code. Start unlocks once everyone's readied up."
-        : selfReady
-          ? "Waiting for the others and the host."
-          : "Ready up when you're set.";
+      setText(
+        hintEl,
+        isHost
+          ? allReady
+            ? solo
+              ? "Flying solo — start whenever."
+              : "Everyone's ready — start when you are."
+            : "Share the code. Start unlocks once everyone's readied up."
+          : selfReady
+            ? "Waiting for the others and the host."
+            : "Ready up when you're set.",
+      );
     },
     hide() {
       el.hidden = true;

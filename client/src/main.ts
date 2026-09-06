@@ -22,7 +22,14 @@ import { createLobbyPanel } from "./lobby.js";
 import { createRenderer } from "./render.js";
 import { createResultPanel, shareText } from "./result.js";
 import { share } from "./share.js";
-import { createArena, describeJoinError, joinArenaByCode, type ArenaRoom } from "./net.js";
+import {
+  createArena,
+  createClient,
+  describeJoinError,
+  joinArenaByCode,
+  type ArenaRoom,
+} from "./net.js";
+import type { Client } from "@colyseus/sdk";
 import { createWakeLock, registerServiceWorker } from "./pwa.js";
 import { createAudio } from "./audio.js";
 import { createFx } from "./fx.js";
@@ -141,14 +148,14 @@ function swingProgress(player: Player, tick: number): number {
 }
 
 /** Landing screen → a joined room. Loops until something works. */
-async function connect(): Promise<ArenaRoom> {
+async function connect(client: Client): Promise<ArenaRoom> {
   for (;;) {
     const choice = await landing.choose();
     try {
       const wardrobe = { color: choice.color, hat: choice.hat };
       const room = choice.code
-        ? await joinArenaByCode(choice.code, choice.name, wardrobe)
-        : await createArena(choice.name, wardrobe);
+        ? await joinArenaByCode(choice.code, choice.name, wardrobe, client)
+        : await createArena(choice.name, wardrobe, client);
 
       // Put the code in the address bar so the host can just share the URL,
       // and so a reload rejoins the same game instead of starting a new one.
@@ -166,7 +173,11 @@ async function connect(): Promise<ArenaRoom> {
 }
 
 async function main(): Promise<void> {
-  const room = await connect();
+  // One Client for the whole session. The SDK transparently reconnects a
+  // dropped socket into the same room (see `room.onDrop` / `room.onReconnect`
+  // below), so `room` here stays valid across a transient network blip.
+  const client = createClient();
+  const room = await connect(client);
 
   // In a game now: keep the screen lit. Requesting it after the landing screen
   // means it always follows a real tap, which is what browsers want to see.
@@ -192,11 +203,15 @@ async function main(): Promise<void> {
    * reconciler applies each input locally the moment we send it, and when the
    * server's truth arrives it rewinds to that truth and replays whatever is
    * still unacked — using the very same `stepBody` the server just ran.
-   *
-   * `frozen` and `stunned` are mirrored fields, so countdowns, deaths and
-   * knockbacks all replay in lock-step with the server instead of fighting it.
    */
   const $ = getStateCallbacks(room);
+
+  /**
+   * False between a drop and the SDK's reconnect. Pauses our own input sends so
+   * a backlog of stale movement isn't flushed at the server on reconnect — the
+   * reconciler resyncs from server truth anyway.
+   */
+  let live = true;
 
   /**
    * The world both sides step against. Set it before the reconciler runs, and
@@ -204,7 +219,14 @@ async function main(): Promise<void> {
    * flipping the shared active map here can't desync a live replay.
    */
   setActiveMap(room.state.mapId);
-  $(room.state).listen("mapId", (value) => setActiveMap(value as string));
+  // Resolved once here and refreshed only when the host changes the map — every
+  // frame and every reconciler replay step then reads a field instead of a
+  // `getMap()` lookup.
+  let currentMap = getMap(room.state.mapId);
+  $(room.state).listen("mapId", (value) => {
+    setActiveMap(value as string);
+    currentMap = getMap(value as string);
+  });
 
   /**
    * Landing dust needs the speed you were falling at, but by the time
@@ -212,6 +234,12 @@ async function main(): Promise<void> {
    * airborne velocity per player and read it back on touchdown.
    */
   const lastFallSpeed = new Map<string, number>();
+
+  function flash(message: string): void {
+    if (!message) return;
+    statusEl.dataset.flash = message;
+    setTimeout(() => delete statusEl.dataset.flash, 2200);
+  }
 
   /**
    * Feedback is driven off decoded state rather than off our own inputs, so it
@@ -246,13 +274,29 @@ async function main(): Promise<void> {
 
     $(player).listen("grounded", (value, previous) => {
       if (!value || previous) return;
+      // `lastFallSpeed` is kept current by the render loop, which already walks
+      // every player each frame — cheaper than a per-`vy`-change listener that
+      // fired ~300×/sec across a full room just to cache a number.
       fx.land(player.x, player.y, lastFallSpeed.get(sessionId) ?? 0);
       lastFallSpeed.set(sessionId, 0);
     });
 
-    $(player).listen("vy", (value) => {
-      if (value > 0) lastFallSpeed.set(sessionId, value);
-    });
+    // Our own stickman answers the thumb instantly: the reconciler applies each
+    // input the moment we send it, then rewinds to server truth and replays
+    // whatever is still unacked with the very same `stepBody` the server ran.
+    if (sessionId === room.sessionId) {
+      predict.reconciler(player, {
+        input: inputHandle,
+        fields: BODY_FIELDS,
+        step: (ctx, body, command) => {
+          // Identical code path to the server's fixed step, INCLUDING the map —
+          // thread the room's world through so a replay never steps our body
+          // against the wrong geometry. Falling off is not handled here: death
+          // costs a life, and only the server decides that.
+          stepBody(body, command, ctx.dt, currentMap);
+        },
+      });
+    }
   });
 
   $(room.state).players.onRemove((_player: Player, sessionId: string) => {
@@ -273,32 +317,45 @@ async function main(): Promise<void> {
     }
   });
 
-  $(room.state).players.onAdd((player: Player, sessionId: string) => {
-    if (sessionId !== room.sessionId) return;
-    predict.reconciler(player, {
-      input: inputHandle,
-      fields: BODY_FIELDS,
-      step: (ctx, body, command) => {
-        // Identical code path to the server's fixed step. If these two ever
-        // disagree, you get rubber-banding — which is why it lives in /shared.
-        // Falling off is *not* handled here: death costs a life, and only the
-        // server gets to decide that.
-        stepBody(body, command, ctx.dt);
-      },
-    });
+  // The server refuses an invalid start with a reason instead of a silent
+  // no-op, so a dead button can't hide the way "Play again" once did.
+  room.onMessage("startRefused", (msg: { reason?: string }) => {
+    flash(
+      msg?.reason === "notEveryoneReady"
+        ? "Everyone needs to ready up first."
+        : msg?.reason === "notHost"
+          ? "Only the host can start the match."
+          : "Can't start the match right now.",
+    );
+  });
+
+  // A transient drop: the SDK is already retrying under us and buffering
+  // state, so `room` stays valid. Pause our sends and tell the player;
+  // `onReconnect` resumes. `onLeave` now fires only once the SDK has genuinely
+  // given up, or we left on purpose.
+  room.onDrop((code) => {
+    live = false;
+    haptics.stop();
+    statusEl.textContent = `connection lost — reconnecting… (${code})`;
+  });
+  room.onReconnect(() => {
+    live = true;
+    flash("reconnected");
+  });
+  room.onLeave((code) => {
+    // Out of the game — let the phone sleep like a phone again, and never
+    // leave a vibration pattern running after the connection drops.
+    wake.release();
+    haptics.stop();
+    statusEl.textContent = `disconnected (${code})`;
   });
 
   lobby.onStart(() => room.send("startMatch"));
   result.onPlayAgain(() => room.send("startMatch"));
+  result.onReady((ready) => room.send("ready", { ready }));
   lobby.onConfigure((change) => room.send("configure", change));
   lobby.onCustomize((change) => room.send("customize", change));
   lobby.onReady((ready) => room.send("ready", { ready }));
-
-  function flash(message: string): void {
-    if (!message) return;
-    statusEl.dataset.flash = message;
-    setTimeout(() => delete statusEl.dataset.flash, 2200);
-  }
 
   lobby.onShare(async () => {
     flash(await share(`Join my StickStakes game — code ${room.roomId}`, inviteUrl(room.roomId)));
@@ -358,14 +415,6 @@ async function main(): Promise<void> {
     });
   }
 
-  room.onLeave((code) => {
-    // Out of the game — let the phone sleep like a phone again, and never
-    // leave a vibration pattern running after the connection drops.
-    wake.release();
-    haptics.stop();
-    statusEl.textContent = `disconnected (${code})`;
-  });
-
   let debugAt = 0;
   let lastFrame = performance.now();
 
@@ -382,7 +431,9 @@ async function main(): Promise<void> {
     // One driver for the whole prediction stack. Returns how many fixed input
     // steps are due this frame — we send exactly that many, no more.
     const steps = predict.tick(now);
-    for (let i = 0; i < steps; i++) {
+    // Hold sends while disconnected — the socket is gone and the SDK is
+    // reconnecting under us. The last state stays on screen, frozen, meanwhile.
+    for (let i = 0; live && i < steps; i++) {
       inputHandle.data.left = input.intent.left;
       inputHandle.data.right = input.intent.right;
       inputHandle.data.jump = input.intent.jump;
@@ -400,15 +451,17 @@ async function main(): Promise<void> {
       y: clamp(focusY - ARENA_HEIGHT * 0.62, -150, 150),
       t: now / 1000,
     };
-    const map = getMap(state.mapId);
-
     renderer.clear();
     renderer.beginWorld(fx.shakeX, fx.shakeY);
-    renderer.drawWorldBack(map, cam);
+    renderer.drawWorldBack(currentMap, cam);
 
     const showLives = phase !== "lobby";
 
     for (const [sessionId, player] of state.players) {
+      // Cache the descent speed so the landing-dust listener can read it back
+      // after `grounded` flips (by which point the server has zeroed `vy`).
+      if (player.vy > 0) lastFallSpeed.set(sessionId, player.vy);
+
       if (!isVisible(player, state)) continue;
 
       renderer.drawStickman({
@@ -428,7 +481,8 @@ async function main(): Promise<void> {
         invulnerable: player.invulnUntilTick > state.tick,
         damage: player.damage,
         stunned: player.stunned,
-      });
+        disconnected: !player.connected,
+      }, cam.t);
     }
 
     // Sparks over the arena but under the fighters would be invisible behind
@@ -459,7 +513,7 @@ async function main(): Promise<void> {
 
     if (now - debugAt > 250) {
       debugAt = now;
-      const rtt = Math.round(room.clock.rtt());
+      const rtt = live ? Math.round(room.clock.rtt()) : 0;
       // Colour the connection dot: green under 80ms, amber under 160, red past.
       statusEl.dataset.ping = rtt < 80 ? "good" : rtt < 160 ? "ok" : "bad";
       statusEl.textContent =
