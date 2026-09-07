@@ -62,11 +62,27 @@ jobs:
         run: |
           npm run dev > /tmp/dev.log 2>&1 &
           echo "waiting for the server and client to come up..."
+          # `dev` runs a one-shot `build:shared`, then starts shared's own
+          # `tsc --watch` alongside the server and client. That watcher does
+          # a fresh initial compile too, rewriting shared/dist a second time
+          # right after startup — which the server's `tsx watch` sees as a
+          # change and restarts on. A single successful curl can land in the
+          # gap between that restart being triggered and the old process
+          # actually going down, so a lone "healthy" reading isn't proof the
+          # stack will still be up when the test suite's first request lands
+          # a moment later. Require a few consecutive healthy checks in a
+          # row before trusting it.
           up=""
+          streak=0
           for i in $(seq 1 90); do
             if curl -sf http://127.0.0.1:2567/health > /dev/null \
                && curl -sf http://127.0.0.1:5173/ > /dev/null; then
-              echo "up after ${i}s"
+              streak=$((streak + 1))
+            else
+              streak=0
+            fi
+            if [ "$streak" -ge 3 ]; then
+              echo "up and stable after ${i}s"
               up=1
               break
             fi
