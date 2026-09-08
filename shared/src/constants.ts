@@ -104,6 +104,44 @@ export const HITSTUN_PER_DAMAGE_MS = 1.6;
 export const HITSTUN_MAX_MS = 700;
 
 /**
+ * ------------------------------------------------------------------- weapons
+ *
+ * A pickup that swaps the punch for a ranged shot. One weapon exists on the map
+ * at a time; the timer for the next one only starts once the current one has
+ * been grabbed, so the arena is never littered with guns. A picked-up weapon
+ * lasts `WEAPON_HOLD_MS` and then the fighter is back to fists.
+ *
+ * Everything here is server-authoritative — the weapon, the projectiles and the
+ * pickup all live in synced state and the client only ever draws them, exactly
+ * like a hazard. None of it reaches `stepBody`, so prediction is unaffected.
+ */
+
+/** The random gap between one weapon being taken and the next one appearing. */
+export const WEAPON_SPAWN_MIN_MS = 30_000;
+export const WEAPON_SPAWN_MAX_MS = 60_000;
+/** How long a fighter keeps a weapon after picking it up. */
+export const WEAPON_HOLD_MS = 20_000;
+/** Centre-to-centre distance at which a fighter walking over a weapon grabs it. */
+export const WEAPON_PICKUP_RADIUS = 30;
+/** Only spawn a weapon on a solid at least this wide, so it never lands on a sliver. */
+export const WEAPON_MIN_SURFACE_WIDTH = 60;
+/** How far above the surface the pickup floats (it also bobs a little). */
+export const WEAPON_HOVER = 16;
+
+/**
+ * The shot. Travels flat in the direction the fighter faces — "where you're
+ * looking", with this control scheme — and deals a punch's worth of damage on
+ * contact. Fast enough to feel hitscan across the 960-wide arena but still a
+ * real travelling object you can watch and, in theory, walk out of.
+ */
+export const SHOT_SPEED = 720;
+export const SHOT_DAMAGE = HIT_DAMAGE;
+/** Minimum gap between shots while a weapon is held. */
+export const SHOT_COOLDOWN_MS = 300;
+/** Visual/collision half-size of a projectile, in arena units. */
+export const SHOT_RADIUS = 3;
+
+/**
  * All match timing is expressed in server ticks rather than wall-clock, so the
  * client can render every countdown from the synced `tick` field alone — no
  * clock alignment, no per-tick timer messages.
@@ -231,6 +269,75 @@ export const WARDROBE_COLORS: readonly string[] = [
   "#f4f4f5", // white
   "#4a4e69", // ink
 ];
+
+/**
+ * ---------------------------------------------------------------- lobby colours
+ *
+ * The pre-match identity palette, one entry per pickable colour. Unlike the
+ * freeform wardrobe swatches above, THIS list is the authoritative set the
+ * lobby hands out: one colour belongs to exactly one player at a time
+ * (Among Us style). The server owns availability — it is always derived from
+ * the players actually in the room, never a separate list that can drift.
+ *
+ * Twelve colours for a ten-player room, so there is always slack. Every hex is
+ * chosen to read clearly against the dark arena and to stay distinct from its
+ * neighbours in a ten-stick scrum.
+ */
+export interface LobbyColor {
+  /** Stable id put on the wire (`player.colorId`). */
+  id: string;
+  /** Human name, shown in the picker and in "X is now Blue" toasts. */
+  name: string;
+  /** The `#rrggbb` the stickman is actually drawn in. */
+  hex: string;
+}
+
+export const LOBBY_COLORS: readonly LobbyColor[] = [
+  { id: "red", name: "Red", hex: "#ff5a5f" },
+  { id: "orange", name: "Orange", hex: "#ff9f45" },
+  { id: "yellow", name: "Yellow", hex: "#ffd166" },
+  { id: "lime", name: "Lime", hex: "#a3e635" },
+  { id: "green", name: "Green", hex: "#4ade80" },
+  { id: "cyan", name: "Cyan", hex: "#4cc9f0" },
+  { id: "blue", name: "Blue", hex: "#5b8cff" },
+  { id: "purple", name: "Purple", hex: "#c792ea" },
+  { id: "pink", name: "Pink", hex: "#f78fb3" },
+  { id: "brown", name: "Brown", hex: "#c08457" },
+  { id: "white", name: "White", hex: "#f4f4f5" },
+  { id: "slate", name: "Slate", hex: "#7c8695" },
+];
+
+const LOBBY_COLOR_BY_ID: ReadonlyMap<string, LobbyColor> = new Map(
+  LOBBY_COLORS.map((c) => [c.id, c]),
+);
+
+const LOBBY_COLOR_BY_HEX: ReadonlyMap<string, LobbyColor> = new Map(
+  LOBBY_COLORS.map((c) => [c.hex, c]),
+);
+
+/** Is this one of the lobby palette ids? */
+export function isLobbyColorId(value: unknown): value is string {
+  return typeof value === "string" && LOBBY_COLOR_BY_ID.has(value);
+}
+
+/** The hex a lobby colour id draws as, or the first palette hex as a fallback. */
+export function lobbyColorHex(id: string): string {
+  return LOBBY_COLOR_BY_ID.get(id)?.hex ?? LOBBY_COLORS[0]!.hex;
+}
+
+/** The display name for a lobby colour id, or "" if it isn't one. */
+export function lobbyColorName(id: string): string {
+  return LOBBY_COLOR_BY_ID.get(id)?.name ?? "";
+}
+
+/**
+ * Best-effort id for a `#rrggbb`: an exact palette match, else "". Used to turn
+ * a remembered wardrobe hex (or a join option) into a palette identity.
+ */
+export function lobbyColorIdFromHex(value: unknown): string {
+  if (typeof value !== "string") return "";
+  return LOBBY_COLOR_BY_HEX.get(value.toLowerCase())?.id ?? "";
+}
 
 /** A six-digit `#rrggbb`. The wardrobe's custom picker only ever emits this. */
 const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;

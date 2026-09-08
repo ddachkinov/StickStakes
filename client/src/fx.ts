@@ -69,6 +69,8 @@ export interface FxStats {
   jumps: number;
   lands: number;
   swings: number;
+  shots: number;
+  pickups: number;
   rounds: number;
   peakShake: number;
   peakParticles: number;
@@ -81,6 +83,8 @@ export function createFx(audio: Audio) {
     jumps: 0,
     lands: 0,
     swings: 0,
+    shots: 0,
+    pickups: 0,
     rounds: 0,
     peakShake: 0,
     peakParticles: 0,
@@ -228,6 +232,32 @@ export function createFx(audio: Audio) {
     swing() {
       stats.swings++;
       audio.play("swing", { gain: 0.55, rate: 0.95 + Math.random() * 0.2 });
+    },
+
+    /** A shot left the barrel: a quick muzzle flash and a sharp report. */
+    shoot(x: number, y: number, direction: number) {
+      stats.shots++;
+      addTrauma(0.3); // ~1.6px — a nudge, well under a punch's kick
+      const cone = direction >= 0 ? 0 : Math.PI;
+      spawn(6, x, y, 0.4, 260, "#ffe08a", {
+        angle: cone,
+        life: 0.16,
+        size: 2.8,
+        gravity: 80,
+      });
+      audio.play("swing", { gain: 0.5, rate: 1.6 });
+    },
+
+    /** A fighter walked over the weapon and grabbed it. */
+    pickup(x: number, y: number) {
+      stats.pickups++;
+      spawn(16, x, y, Math.PI, 170, "#ffe08a", {
+        angle: -Math.PI / 2,
+        life: 0.5,
+        size: 2.8,
+        gravity: 380,
+      });
+      audio.play("jump", { gain: 0.5, rate: 1.7 });
     },
 
     jump() {

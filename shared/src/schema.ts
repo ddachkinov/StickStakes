@@ -39,6 +39,13 @@ export const Player = schema(
      * only — never read by the physics step.
      */
     color: t.string().default("#ffffff"),
+    /**
+     * Lobby identity colour — one of `LOBBY_COLORS` ids, or "" for a legacy /
+     * off-palette look. The server keeps this unique across the room: no two
+     * players ever hold the same id at once. `color` above is kept in step with
+     * it whenever it changes from the lobby.
+     */
+    colorId: t.string().default(""),
     /** Wardrobe hat id — one of `HATS`. Cosmetic only; the client draws it. */
     hat: t.string().default(DEFAULT_HAT),
     /** Join order, also the spawn point index. */
@@ -70,6 +77,14 @@ export const Player = schema(
      */
     attackUntilTick: t.number().default(0),
     /**
+     * Server tick until which this fighter is holding a weapon (0 = fists).
+     * While armed, the attack button fires a shot instead of throwing a punch,
+     * and the punch hitbox is suppressed.
+     */
+    armedUntilTick: t.number().default(0),
+    /** Earliest server tick the armed fighter may fire the next shot. */
+    shotReadyTick: t.number().default(0),
+    /**
      * Damage taken this life, as a percentage. Not health — you never die from
      * it. It is purely the knockback multiplier: at 0% a hit nudges you, at
      * 120% the same hit throws you off the map. Resets on every respawn.
@@ -96,12 +111,41 @@ export const Player = schema(
 );
 export type Player = SchemaType<typeof Player>;
 
+/**
+ * One weapon shot in flight. Server-owned: the room spawns these when an armed
+ * fighter fires, steps them every tick, and resolves their hits. The client
+ * only draws them, so `id` is here purely to give the renderer something stable
+ * to key a per-projectile trail on if it ever wants one.
+ */
+export const Projectile = schema(
+  {
+    id: t.uint32().default(0),
+    /** Session id of the fighter who fired it — never hits its own owner. */
+    ownerId: t.string().default(""),
+    x: t.number().default(0),
+    y: t.number().default(0),
+    vx: t.number().default(0),
+    vy: t.number().default(0),
+  },
+  "Projectile",
+);
+export type Projectile = SchemaType<typeof Projectile>;
+
 export const ArenaState = schema(
   {
     /** Ticks since the room was created. Handy for debug overlays. */
     tick: t.number().default(0),
     maxPlayers: t.uint8().default(MAX_PLAYERS),
     players: t.map(Player),
+
+    // --- weapons ---
+    /** A weapon is lying on the map, waiting to be picked up. */
+    weaponActive: t.boolean().default(false),
+    /** Where it sits (centre of the pickup), in arena units. */
+    weaponX: t.number().default(0),
+    weaponY: t.number().default(0),
+    /** Every shot currently in flight. */
+    projectiles: t.array(Projectile),
 
     // --- match ---
     /** One of MatchPhase; a plain string so the client can `switch` on it. */

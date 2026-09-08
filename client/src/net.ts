@@ -26,6 +26,8 @@ export type ArenaRoom = Room<unknown, ArenaState>;
 export interface Wardrobe {
   color: string;
   hat: string;
+  /** Remembered lobby palette id; the server honours it if still free. */
+  colorId?: string;
 }
 
 /** Start a new game. The server assigns the room a 4-letter code as its id. */

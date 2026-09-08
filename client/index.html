@@ -35,63 +35,130 @@
       <div id="bigtext-sub"></div>
     </div>
 
-    <!-- Lobby: your fighter, the code to read across the table, and the setup. -->
+    <!-- Lobby: a pre-match waiting room. Every connected stickman stands on the
+         floor; you customise yours, claim a colour nobody else has, and ready
+         up. The arena stays visible behind it — this is a scrim, not a page. -->
     <div id="lobby" hidden>
-      <div id="lobby-scroll">
-        <header id="lobby-hero">
-          <div class="hero-stage">
-            <canvas id="lobby-fighter" class="fighter-canvas"></canvas>
-          </div>
-          <div class="hero-meta">
-            <span class="hero-name" id="lobby-hero-name">You</span>
-            <span class="hero-tag" id="lobby-hero-tag">picking a look…</span>
-          </div>
-        </header>
+      <header class="lobby-header">
+        <div class="lobby-brand">STICK<span>STAKES</span></div>
+        <button id="lobby-room" type="button" class="lobby-room" title="Share the room">
+          <span class="label">Lobby</span>
+          <strong id="lobby-code-value">#····</strong>
+          <span class="lobby-room-share" aria-hidden="true">↗</span>
+        </button>
+        <button id="lobby-gear" type="button" class="lobby-gear" aria-label="Settings">⚙</button>
+      </header>
 
-        <div id="lobby-code">
-          <div class="lobby-code-main">
-            <span class="label">Room code</span>
-            <strong id="lobby-code-value">····</strong>
-          </div>
-          <button id="lobby-share" type="button">
-            <span aria-hidden="true">↗</span> Share
-          </button>
+      <div class="lobby-arena">
+        <div id="lobby-floor" class="lobby-floor" aria-hidden="true"></div>
+        <p id="lobby-count-banner" class="lobby-count-banner" hidden></p>
+      </div>
+
+      <div class="lobby-actionbar">
+        <button id="lobby-wardrobe-open" type="button" class="lobby-act lobby-act-wardrobe">
+          <span aria-hidden="true">🎨</span> Wardrobe
+        </button>
+        <p id="lobby-status" class="lobby-status"></p>
+        <button id="lobby-ready" type="button" class="lobby-act lobby-act-ready">Ready up</button>
+        <button id="lobby-start" type="button" class="lobby-act lobby-act-start" hidden>Start match</button>
+      </div>
+
+      <aside class="lobby-roster-panel">
+        <div class="lobby-roster-head">
+          <span class="label">Players</span>
+          <span id="lobby-roster-count" class="lobby-roster-count">0/0</span>
         </div>
+        <ul id="lobby-roster-list" class="lobby-roster-list"></ul>
+      </aside>
 
-        <div id="lobby-setup">
-          <div class="setup-field">
-            <span class="label">Rounds</span>
-            <div id="setup-rounds" class="segmented"></div>
-          </div>
-          <div class="setup-field">
-            <span class="label">Lives</span>
-            <div id="setup-lives" class="segmented"></div>
-          </div>
-          <div class="setup-field setup-map-field">
-            <span class="label">World</span>
-            <div id="setup-map" class="map-grid"></div>
-            <span id="setup-map-blurb" class="setup-hint"></span>
-          </div>
-          <div class="setup-field setup-stake-field">
-            <span class="label">Playing for</span>
-            <input id="setup-stake" type="text" maxlength="80" placeholder="Loser buys lunch" />
-          </div>
-        </div>
+      <div id="lobby-toasts" class="lobby-toasts" aria-live="polite"></div>
 
-        <div class="wardrobe wardrobe-row" id="lobby-wardrobe">
-          <span class="label">Your fighter</span>
-          <div class="strip swatches" id="lobby-wardrobe-colors"></div>
-          <div class="strip chips" id="lobby-wardrobe-hats"></div>
+      <!-- Wardrobe: customise your stickman. Colour is the functional category;
+           the rest are scaffolded for later cosmetics. -->
+      <div id="lobby-wardrobe" class="lobby-modal" hidden>
+        <div class="lobby-modal-card lobby-wardrobe-card" role="dialog" aria-label="Wardrobe">
+          <div class="lobby-modal-head">
+            <h2>Wardrobe</h2>
+            <button id="lobby-wardrobe-close" type="button" class="lobby-modal-x" aria-label="Close">✕</button>
+          </div>
+          <div class="lobby-wardrobe-body">
+            <div class="hero-stage lobby-wardrobe-preview">
+              <canvas id="lobby-fighter" class="fighter-canvas"></canvas>
+            </div>
+            <div class="lobby-wardrobe-cats">
+              <button type="button" class="wardrobe-cat is-on" data-cat="color">Colour</button>
+              <button type="button" class="wardrobe-cat" disabled>Body</button>
+              <button type="button" class="wardrobe-cat" disabled>Head</button>
+              <button type="button" class="wardrobe-cat" disabled>Face</button>
+              <button type="button" class="wardrobe-cat" disabled>Gloves</button>
+              <button type="button" class="wardrobe-cat" disabled>Emotes</button>
+            </div>
+            <div class="wardrobe-section">
+              <span class="label">Colour — one per player</span>
+              <div id="lobby-color-grid" class="lobby-color-grid"></div>
+            </div>
+            <div class="wardrobe-section">
+              <span class="label">Hat</span>
+              <div id="lobby-wardrobe-hats" class="chips"></div>
+            </div>
+          </div>
         </div>
       </div>
 
-      <div id="lobby-foot">
-        <button id="lobby-start" type="button" class="lobby-cta is-start" hidden>Start match</button>
-        <button id="lobby-ready" type="button" class="lobby-cta">Ready up</button>
-        <p id="lobby-foot-meta">
-          <span id="lobby-ready-count"></span>
-          <span id="lobby-hint"></span>
-        </p>
+      <!-- Settings: audio, the host's match rules, and the way out. -->
+      <div id="lobby-settings" class="lobby-modal" hidden>
+        <div class="lobby-modal-card" role="dialog" aria-label="Settings">
+          <div class="lobby-modal-head">
+            <h2>Settings</h2>
+            <button id="lobby-settings-close" type="button" class="lobby-modal-x" aria-label="Close">✕</button>
+          </div>
+          <div class="lobby-settings-body">
+            <div class="settings-row">
+              <span>Sound</span>
+              <button id="lobby-set-sound" type="button" class="settings-toggle" aria-pressed="true">On</button>
+            </div>
+            <div class="settings-row">
+              <span>Fullscreen</span>
+              <button id="lobby-set-fullscreen" type="button" class="settings-toggle" aria-pressed="false">Off</button>
+            </div>
+
+            <div id="lobby-rules" class="settings-rules">
+              <span class="label">Match rules</span>
+              <div class="setup-field">
+                <span class="label">Rounds</span>
+                <div id="setup-rounds" class="segmented"></div>
+              </div>
+              <div class="setup-field">
+                <span class="label">Lives</span>
+                <div id="setup-lives" class="segmented"></div>
+              </div>
+              <div class="setup-field setup-map-field">
+                <span class="label">World</span>
+                <div id="setup-map" class="map-grid"></div>
+                <span id="setup-map-blurb" class="setup-hint"></span>
+              </div>
+              <div class="setup-field setup-stake-field">
+                <span class="label">Playing for</span>
+                <input id="setup-stake" type="text" maxlength="80" placeholder="Loser buys lunch" />
+              </div>
+              <p id="lobby-rules-note" class="setup-hint"></p>
+            </div>
+
+            <button id="lobby-leave" type="button" class="settings-leave">Leave lobby</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Leave confirmation. -->
+      <div id="lobby-leave-confirm" class="lobby-modal" hidden>
+        <div class="lobby-modal-card lobby-confirm-card" role="alertdialog" aria-label="Leave lobby">
+          <h2>Leave lobby?</h2>
+          <p>You'll drop back to the start screen and your colour frees up.</p>
+          <div class="lobby-confirm-actions">
+            <button id="lobby-leave-cancel" type="button">Cancel</button>
+            <button id="lobby-leave-go" type="button" class="is-danger">Leave</button>
+          </div>
+        </div>
       </div>
     </div>
 

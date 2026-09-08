@@ -66,6 +66,8 @@ export interface Stickman {
   showLives: boolean;
   /** 0..1 through the attack swing; 0 means not swinging. */
   swing: number;
+  /** Holding a weapon — the lead arm carries a barrel instead of a fist. */
+  armed: boolean;
   /** Fresh-spawn invulnerability, drawn as a flicker. */
   invulnerable: boolean;
   /** Damage taken this life, as a percentage. Drives the knockback, not death. */
@@ -579,6 +581,55 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     ctx.restore();
   }
 
+  /**
+   * The weapon lying on the map, waiting to be walked over. A pistol silhouette
+   * with a warm glow and a slow bob, so it reads as "grab this" from across the
+   * arena. `t` is seconds, for the bob.
+   */
+  function drawWeaponPickup(x: number, y: number, t: number): void {
+    const bob = Math.sin(t * 3) * 3;
+    const cy = y + bob;
+
+    ctx.save();
+    const glow = ctx.createRadialGradient(x, cy, 2, x, cy, 26);
+    glow.addColorStop(0, "rgba(255,224,138,0.5)");
+    glow.addColorStop(1, "rgba(255,224,138,0)");
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(x, cy, 26, 0, Math.PI * 2);
+    ctx.fill();
+
+    // A blocky pistol: slide, then grip. Centred on x.
+    ctx.fillStyle = "#e8ecf1";
+    ctx.fillRect(x - 11, cy - 4, 22, 6);
+    ctx.fillStyle = "#c2c9d2";
+    ctx.fillRect(x - 4, cy + 1, 6, 9);
+    ctx.restore();
+  }
+
+  /** One shot in flight — a bright tracer with a short tail along its velocity. */
+  function drawProjectile(shot: { x: number; y: number; vx: number; vy: number }): void {
+    const speed = Math.hypot(shot.vx, shot.vy) || 1;
+    const ux = shot.vx / speed;
+    const uy = shot.vy / speed;
+    const tail = 12;
+
+    ctx.save();
+    ctx.strokeStyle = "rgba(255,224,138,0.55)";
+    ctx.lineWidth = 3;
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(shot.x - ux * tail, shot.y - uy * tail);
+    ctx.lineTo(shot.x, shot.y);
+    ctx.stroke();
+
+    ctx.fillStyle = "#fff3d0";
+    ctx.beginPath();
+    ctx.arc(shot.x, shot.y, 3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
   function drawStickman(man: Stickman): void {
     const { x, y, facing, color } = man;
     const headR = PLAYER_WIDTH * 0.32;
@@ -620,7 +671,15 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     ctx.lineTo(x, hipY);
 
     const shoulderY = neckY + 5;
-    if (man.swing > 0) {
+    if (man.armed) {
+      // Weapon stance: the lead arm is locked out straight along the facing
+      // direction with a short recoil hitch on each shot; the barrel itself is
+      // stroked separately once the figure is done.
+      const recoil = man.swing > 0 ? Math.sin(man.swing * Math.PI) * 4 : 0;
+      ctx.moveTo(x - facing * PLAYER_WIDTH * 0.36, shoulderY + 9);
+      ctx.lineTo(x + lean * 0.5, shoulderY + 1);
+      ctx.lineTo(x + facing * (PLAYER_WIDTH * 0.5 - recoil), shoulderY + 2);
+    } else if (man.swing > 0) {
       // Swing: the lead arm punches out and back over the window, the trailing
       // arm counterweights. The server's hitbox is live across the middle of
       // this arc, so the reach you see is roughly the reach you get.
@@ -640,6 +699,24 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     ctx.lineTo(x, hipY);
     ctx.lineTo(x + PLAYER_WIDTH * 0.34, y);
     ctx.stroke();
+
+    // The weapon barrel: a short, thick stub off the end of the lead arm,
+    // pointing the way the shot will go. Drawn in gunmetal (white while stunned,
+    // like the rest of the silhouette) so it never reads as part of the stick.
+    if (man.armed) {
+      const recoil = man.swing > 0 ? Math.sin(man.swing * Math.PI) * 4 : 0;
+      const bx = x + facing * (PLAYER_WIDTH * 0.5 - recoil);
+      const by = neckY + 5 + 2;
+      ctx.save();
+      ctx.strokeStyle = man.stunned ? "#ffffff" : "#d7dde5";
+      ctx.lineWidth = 4;
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(bx, by);
+      ctx.lineTo(bx + facing * 11, by);
+      ctx.stroke();
+      ctx.restore();
+    }
 
     // Little nose-dot so you can tell which way you're pointing.
     ctx.beginPath();
@@ -838,6 +915,8 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     endWorld,
     drawWorldBack,
     drawParticles,
+    drawWeaponPickup,
+    drawProjectile,
     drawStickman,
     drawControls,
     get cssWidth() {
