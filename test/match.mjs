@@ -75,6 +75,10 @@ await sleep(400);
 check("still lobby after B pressed start", phase(a) === "lobby", phase(a));
 
 console.log("\n=== host starts ===");
+// The server only starts once the whole room has readied up (host included).
+a.room.send("ready", { ready: true });
+b.room.send("ready", { ready: true });
+await waitFor(a, () => [...state(a).players.values()].every((p) => p.ready), "all ready");
 a.room.send("startMatch");
 await waitFor(a, () => phase(a) === "countdown", "countdown");
 check("phase is countdown", phase(a) === "countdown");
@@ -150,6 +154,10 @@ check("phase agrees", phase(a) === phase(b), `${phase(a)} vs ${phase(b)}`);
 check("winner agrees", state(a).matchWinnerId === state(b).matchWinnerId);
 
 console.log("\n=== host can replay ===");
+// Ready flags are cleared at match end, so the room has to ready up again.
+a.room.send("ready", { ready: true });
+b.room.send("ready", { ready: true });
+await waitFor(a, () => [...state(a).players.values()].every((p) => p.ready), "all ready again");
 a.room.send("startMatch");
 await waitFor(a, () => phase(a) === "countdown", "replay countdown");
 check("new match started", state(a).round === 1, `round=${state(a).round}`);

@@ -1,14 +1,25 @@
-import { MAX_NAME_LENGTH, ROOM_CODE_ALPHABET, ROOM_CODE_LENGTH } from "@stickstakes/shared";
+import {
+  MAX_NAME_LENGTH,
+  PLAYER_COLORS,
+  ROOM_CODE_ALPHABET,
+  ROOM_CODE_LENGTH,
+} from "@stickstakes/shared";
+import { createFighterShowcase } from "./figure.js";
+import { loadWardrobe, mountWardrobe } from "./wardrobe.js";
 
 /**
- * The screen before the fight: pick a name, then create a game or join one by
- * code. Nothing else in the app runs until this resolves — `main()` awaits it.
+ * The screen before the fight: pick a name and a look, then create a game or
+ * join one by code. Nothing else in the app runs until this resolves —
+ * `main()` awaits it.
  */
 
 export interface LandingResult {
   name: string;
   /** Empty when creating a new game. */
   code: string;
+  /** Wardrobe pick, carried into the join options. */
+  color: string;
+  hat: string;
 }
 
 const NAME_KEY = "stickstakes:name";
@@ -44,9 +55,21 @@ export function createLanding(root: ParentNode = document): Landing {
   const createBtn = root.querySelector<HTMLButtonElement>("#landing-create")!;
   const joinBtn = root.querySelector<HTMLButtonElement>("#landing-join")!;
   const errorEl = root.querySelector<HTMLElement>("#landing-error")!;
+  const wardrobeColorsEl = root.querySelector<HTMLElement>("#wardrobe-colors")!;
+  const wardrobeHatsEl = root.querySelector<HTMLElement>("#wardrobe-hats")!;
+  const fighterCanvas = root.querySelector<HTMLCanvasElement>("#landing-fighter")!;
 
   nameEl.value = localStorage.getItem(NAME_KEY) ?? "";
   codeEl.value = codeFromUrl();
+
+  // Default to the first slot colour until the player picks; `mountWardrobe`
+  // reads any remembered choice out of localStorage over the top of it.
+  const initialLook = loadWardrobe(PLAYER_COLORS[0]!);
+  const wardrobe = mountWardrobe(wardrobeColorsEl, wardrobeHatsEl, initialLook);
+
+  // A live preview of the fighter you're about to join as.
+  const showcase = createFighterShowcase(fighterCanvas, wardrobe.value());
+  wardrobe.onChange((choice) => showcase.set(choice.color, choice.hat));
 
   // Keep the code field always in the alphabet, so a typed "0" or "l" can't
   // silently become an unjoinable code.
@@ -73,7 +96,8 @@ export function createLanding(root: ParentNode = document): Landing {
   createBtn.addEventListener("click", () => {
     errorEl.textContent = "";
     busy(true);
-    settle?.({ name: playerName(), code: "" });
+    const { color, hat } = wardrobe.value();
+    settle?.({ name: playerName(), code: "", color, hat });
   });
 
   form.addEventListener("submit", (event) => {
@@ -86,7 +110,8 @@ export function createLanding(root: ParentNode = document): Landing {
     }
     errorEl.textContent = "";
     busy(true);
-    settle?.({ name: playerName(), code });
+    const { color, hat } = wardrobe.value();
+    settle?.({ name: playerName(), code, color, hat });
   });
 
   return {
@@ -107,6 +132,8 @@ export function createLanding(root: ParentNode = document): Landing {
     },
     hide() {
       el.hidden = true;
+      // The landing screen is done for the session — stop its animation loop.
+      showcase.stop();
     },
   };
 }

@@ -6,6 +6,8 @@ import {
   ATTACK_STARTUP_MS,
   ATTACK_SWING_MS,
   COUNTDOWN_MS,
+  DEFAULT_HAT,
+  DEFAULT_MAP_ID,
   DEFAULT_STAKE,
   HITSTUN_BASE_MS,
   HITSTUN_MAX_MS,
@@ -37,12 +39,17 @@ import {
   TOTAL_ROUNDS,
   attackHitbox,
   bodyAabb,
+  getMap,
+  isHatId,
+  isHexColor,
+  isMapId,
   msToTicks,
   overlapsRect,
   roundWinsToTakeMatch,
   respawnBody,
   spawnBody,
   stepBody,
+  type WorldMap,
 } from "@stickstakes/shared";
 
 /** Host-only match setup message. Every field is validated server-side. */
@@ -50,6 +57,13 @@ interface Configure {
   totalRounds?: number;
   livesPerRound?: number;
   stake?: string;
+  mapId?: string;
+}
+
+/** Per-player wardrobe. Anyone may set their own; every value is validated. */
+interface Customize {
+  color?: string;
+  hat?: string;
 }
 
 /**
@@ -101,6 +115,7 @@ export class ArenaRoom extends Room<{ state: ArenaState; input: FightInput }> {
     this.state.livesPerRound = LIVES_PER_ROUND;
     this.state.roundWinsToTakeMatch = ROUND_WINS_TO_TAKE_MATCH;
     this.state.stake = DEFAULT_STAKE;
+    this.state.mapId = DEFAULT_MAP_ID;
     this.state.phase = "lobby";
 
     // Only the host can drive the match forward. Everyone else's press is a
@@ -109,8 +124,23 @@ export class ArenaRoom extends Room<{ state: ArenaState; input: FightInput }> {
       if (client.sessionId !== this.state.hostId) return;
       if (this.state.phase !== "lobby" && this.state.phase !== "matchOver") return;
       if (this.state.players.size === 0) return;
+      // Everyone in the room has to have readied up first — the host included.
+      if (!this.everyoneReady()) return;
       this.resetMatch();
       this.startCountdown();
+    });
+
+    /**
+     * Ready toggle. Anyone may set their own ready flag (and only their own)
+     * while the room is waiting in the lobby or on the match-over screen. An
+     * explicit boolean sets it; a bare message flips it.
+     */
+    this.onMessage("ready", (client, message?: { ready?: boolean }) => {
+      if (this.state.phase !== "lobby" && this.state.phase !== "matchOver") return;
+      const player = this.state.players.get(client.sessionId);
+      if (!player) return;
+      player.ready =
+        typeof message?.ready === "boolean" ? message.ready : !player.ready;
     });
 
     /**
@@ -131,6 +161,11 @@ export class ArenaRoom extends Room<{ state: ArenaState; input: FightInput }> {
       const lives = Number(message?.livesPerRound);
       if (LIVES_OPTIONS.includes(lives)) this.state.livesPerRound = lives;
 
+      // The world. Validated against the shipped list; an unknown id is dropped
+      // and the current map stays. Only settable in the lobby / on match-over,
+      // like every other rule, so the geometry never shifts mid-round.
+      if (isMapId(message?.mapId)) this.state.mapId = message.mapId;
+
       if (typeof message?.stake === "string") {
         const stake = message.stake.trim().slice(0, MAX_STAKE_LENGTH);
         this.state.stake = stake || DEFAULT_STAKE;
@@ -143,6 +178,18 @@ export class ArenaRoom extends Room<{ state: ArenaState; input: FightInput }> {
       if (!player) return;
       const name = String(message?.name ?? "").trim().slice(0, MAX_NAME_LENGTH);
       if (name) player.name = name;
+    });
+
+    /**
+     * Wardrobe. Anyone may restyle their own stickman at any time — it is
+     * cosmetic and never touches the simulation. Junk values are dropped, not
+     * clamped: a bad colour or an unknown hat just leaves the old one in place.
+     */
+    this.onMessage("customize", (client, message: Customize) => {
+      const player = this.state.players.get(client.sessionId);
+      if (!player) return;
+      if (isHexColor(message?.color)) player.color = message.color.toLowerCase();
+      if (isHatId(message?.hat)) player.hat = message.hat;
     });
 
     this.setFixedTimestep((ctx) => {
@@ -179,15 +226,25 @@ export class ArenaRoom extends Room<{ state: ArenaState; input: FightInput }> {
 
   // ---------------------------------------------------------------- players
 
-  onJoin(client: Client, options?: { name?: string }) {
+  /** This room's world. Passed explicitly into the shared step so that many
+   *  rooms on one process can run different maps without a shared global. */
+  private get map(): WorldMap {
+    return getMap(this.state.mapId);
+  }
+
+  onJoin(client: Client, options?: { name?: string; color?: string; hat?: string }) {
     const slot = this.nextSlot++ % SPAWN_POINTS.length;
     // A match already in progress: sit this round out, join at the next one.
     const midMatch = this.state.phase !== "lobby";
 
     const player = new Player({
-      ...spawnBody(slot),
+      ...spawnBody(slot, this.map.spawns),
       name: (options?.name ?? "").trim().slice(0, MAX_NAME_LENGTH) || `P${slot + 1}`,
-      color: PLAYER_COLORS[slot % PLAYER_COLORS.length]!,
+      // Their wardrobe pick if it's valid, otherwise the join-order colour.
+      color: isHexColor(options?.color)
+        ? options.color.toLowerCase()
+        : PLAYER_COLORS[slot % PLAYER_COLORS.length]!,
+      hat: isHatId(options?.hat) ? options.hat : DEFAULT_HAT,
       slot,
       // Spread first so these two win: `spawnBody` carries `frozen: false`.
       spectating: midMatch,
@@ -221,6 +278,7 @@ export class ArenaRoom extends Room<{ state: ArenaState; input: FightInput }> {
   // --------------------------------------------------------------- physics
 
   private stepPlayers(dt: number) {
+    const map = this.map;
     for (const [sessionId, player] of this.state.players) {
       // Timers first: they have to advance even on a tick where this client's
       // input hasn't landed yet, or a dead player would never come back.
@@ -235,16 +293,40 @@ export class ArenaRoom extends Room<{ state: ArenaState; input: FightInput }> {
       this.tryAttack(sessionId, player, input.attack);
 
       // `player` is structurally a PlayerBody — same function the client runs.
-      const fellOff = stepBody(player, input, dt);
-      if (!fellOff) continue;
+      const fellOff = stepBody(player, input, dt, map);
 
-      if (this.state.phase === "playing" && !player.spectating && player.lives > 0) {
+      const inFight =
+        this.state.phase === "playing" && !player.spectating && player.lives > 0;
+      // A hazard (spikes, a saw blade) is resolved here, next to the fall off
+      // the world — both cost exactly one life and the client predicts neither.
+      // Skip a body that's already dying: `killFighter` freezes it in place, so
+      // without this guard a corpse lying on the spikes is re-killed every tick
+      // and burns through every life before the respawn timer can fire.
+      const struck =
+        inFight &&
+        !player.frozen &&
+        player.deadUntilTick === 0 &&
+        this.touchesHazard(player, map);
+
+      if (!fellOff && !struck) continue;
+
+      if (inFight) {
         this.killFighter(player);
       } else {
         // Milling about in the lobby or between rounds: falling is free.
-        respawnBody(player, player.slot);
+        respawnBody(player, player.slot, map.spawns);
       }
     }
+  }
+
+  /** Is this body overlapping any of the current map's kill rectangles? */
+  private touchesHazard(player: Player, map: WorldMap): boolean {
+    if (map.hazards.length === 0) return false;
+    const box = bodyAabb(player);
+    for (const hazard of map.hazards) {
+      if (overlapsRect(box, hazard)) return true;
+    }
+    return false;
   }
 
   /** Start a swing if the button is down and the last one has fully recovered. */
@@ -361,7 +443,7 @@ export class ArenaRoom extends Room<{ state: ArenaState; input: FightInput }> {
   }
 
   private respawnFighter(player: Player) {
-    respawnBody(player, player.slot); // also clears `frozen` and `stunned`
+    respawnBody(player, player.slot, this.map.spawns); // also clears `frozen` / `stunned`
     player.deadUntilTick = 0;
     player.attackUntilTick = 0;
     player.stunUntilTick = 0;
@@ -407,7 +489,8 @@ export class ArenaRoom extends Room<{ state: ArenaState; input: FightInput }> {
       player.attackUntilTick = 0;
       player.stunUntilTick = 0;
       player.damage = 0;
-      respawnBody(player, player.slot);
+      player.ready = false; // next lobby / "play again" needs fresh readies
+      respawnBody(player, player.slot, this.map.spawns);
       player.frozen = true; // held at spawn while "3 · 2 · 1" runs
     }
 
@@ -484,6 +567,15 @@ export class ArenaRoom extends Room<{ state: ArenaState; input: FightInput }> {
   /** Everyone taking part in the current round, as [sessionId, player]. */
   private fighters(): [string, Player][] {
     return Array.from(this.state.players.entries()).filter(([, p]) => !p.spectating);
+  }
+
+  /** True once every player in the room has readied up (and there is one). */
+  private everyoneReady(): boolean {
+    if (this.state.players.size === 0) return false;
+    for (const player of this.state.players.values()) {
+      if (!player.ready) return false;
+    }
+    return true;
   }
 
   /** Session id of the first player to reach the round-win target, if any. */

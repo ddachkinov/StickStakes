@@ -1,4 +1,5 @@
 import type { ArenaState, Player } from "@stickstakes/shared";
+import { createFighterShowcase } from "./figure.js";
 
 /**
  * The end screen — the point of the whole thing. Who won, what they won, the
@@ -53,6 +54,9 @@ export function createResultPanel(root: ParentNode = document): ResultPanel {
   const againBtn = root.querySelector<HTMLButtonElement>("#result-again")!;
   const totalEl = root.querySelector<HTMLInputElement>("#split-total")!;
   const splitOutEl = root.querySelector<HTMLElement>("#split-out")!;
+  const fighterCanvas = root.querySelector<HTMLCanvasElement>("#result-fighter")!;
+
+  const showcase = createFighterShowcase(fighterCanvas, { color: "#e8ecf1", hat: "none" });
 
   let shareHandler: ((text: string) => void) | undefined;
   let againHandler: (() => void) | undefined;
@@ -104,10 +108,17 @@ export function createResultPanel(root: ParentNode = document): ResultPanel {
       titleEl.style.color = winner?.color ?? "#e8ecf1";
       stakeEl.textContent = winner ? state.stake : "Nobody owes anybody.";
 
+      // The hero stage wears the winner (or a neutral stickman on a dead heat).
+      showcase.set(winner?.color ?? "#e8ecf1", winner?.hat ?? "none");
+
       listEl.replaceChildren(
-        ...rows.map((row) => {
+        ...rows.map((row, i) => {
           const li = document.createElement("li");
           li.classList.toggle("is-self", row.isSelf);
+
+          const rank = document.createElement("span");
+          rank.className = "result-rank";
+          rank.textContent = String(i + 1);
 
           const dot = document.createElement("span");
           dot.className = "result-dot";
@@ -121,7 +132,7 @@ export function createResultPanel(root: ParentNode = document): ResultPanel {
           wins.className = "result-wins";
           wins.textContent = row.wins === 1 ? "1 round" : `${row.wins} rounds`;
 
-          li.append(dot, name, wins);
+          li.append(rank, dot, name, wins);
           return li;
         }),
       );

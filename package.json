@@ -22,9 +22,10 @@
     "start": "npm --workspace @stickstakes/server run start",
     "test:match": "node test/match.mjs",
     "test:combat": "node test/combat.mjs",
-    "test": "npm run test:lobby && npm run test:match && npm run test:combat && npm run test:feel",
+    "test:maps": "node test/maps.mjs",
     "test:lobby": "node test/lobby.mjs",
     "test:feel": "node test/feel.mjs",
+    "test": "npm run test:maps && npm run test:lobby && npm run test:match && npm run test:combat && npm run test:feel",
     "deploy": "node scripts/deploy-remote.mjs",
     "logs": "ssh gp 'pm2 logs stickstakes'"
   },

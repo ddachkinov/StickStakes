@@ -157,6 +157,13 @@ async function swing(attempts = 3) {
 }
 
 console.log("\n=== start a match ===");
+// The server only starts once the whole room has readied up (host included).
+a.room.send("ready", { ready: true });
+b.room.send("ready", { ready: true });
+await waitFor(
+  () => [...state().players.values()].every((p) => p.ready),
+  "all ready",
+);
 a.room.send("startMatch");
 await waitFor(() => state().phase === "playing", "playing");
 // Spawn i-frames must lapse before anything can connect, and they leave no

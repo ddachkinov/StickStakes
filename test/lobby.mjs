@@ -121,6 +121,69 @@ await sleep(400);
 const renamed = rooms[1].state.players.get(guest.sessionId)?.name ?? "";
 check("rename applied and clamped", renamed === "Dimitar Dach", `"${renamed}"`);
 
+console.log("\n=== wardrobe ===");
+// A fresh room — the one above is filled to capacity.
+const wHost = track(await client.create(ROOM_NAME, { name: "PLAIN" }));
+await sleep(200);
+const dressed = track(
+  await client.joinById(wHost.roomId, { name: "STYLE", color: "#ABCDEF", hat: "crown" }),
+);
+await sleep(400);
+const dressedOnHost = () => wHost.state.players.get(dressed.sessionId);
+check("join colour applied and lower-cased", dressedOnHost()?.color === "#abcdef", dressedOnHost()?.color);
+check("join hat applied", dressedOnHost()?.hat === "crown", dressedOnHost()?.hat);
+
+dressed.send("customize", { color: "not-a-colour", hat: "sombrero" });
+await sleep(300);
+check(
+  "junk customise is dropped, not applied",
+  dressedOnHost()?.color === "#abcdef" && dressedOnHost()?.hat === "crown",
+  `color=${dressedOnHost()?.color} hat=${dressedOnHost()?.hat}`,
+);
+
+dressed.send("customize", { color: "#112233", hat: "party" });
+await sleep(300);
+check(
+  "a valid customise restyles the player",
+  dressedOnHost()?.color === "#112233" && dressedOnHost()?.hat === "party",
+  `color=${dressedOnHost()?.color} hat=${dressedOnHost()?.hat}`,
+);
+
+wHost.send("customize", { hat: "halo" });
+await sleep(300);
+check("customise only touches the sender", dressedOnHost()?.hat === "party", `${dressedOnHost()?.hat}`);
+
+console.log("\n=== ready gate ===");
+const rHost = track(await client.create(ROOM_NAME, { name: "RHOST" }));
+await sleep(200);
+const rGuest = track(await client.joinById(rHost.roomId, { name: "RGUEST" }));
+await sleep(400);
+
+rHost.send("startMatch");
+await sleep(400);
+check("host can't start while nobody is ready", rHost.state.phase === "lobby", rHost.state.phase);
+
+rHost.send("ready", { ready: true });
+await sleep(300);
+rHost.send("startMatch");
+await sleep(400);
+check("host still can't start with a guest not ready", rHost.state.phase === "lobby", rHost.state.phase);
+
+rGuest.send("ready", { ready: true });
+await sleep(300);
+check("both players show ready",
+  [...rHost.state.players.values()].every((p) => p.ready),
+  [...rHost.state.players.values()].map((p) => p.ready).join(","));
+
+rHost.send("startMatch");
+await sleep(400);
+check("host starts once everyone is ready", rHost.state.phase === "countdown", rHost.state.phase);
+
+await sleep(200);
+check("ready flags are cleared for the new match",
+  [...rHost.state.players.values()].every((p) => !p.ready),
+  [...rHost.state.players.values()].map((p) => p.ready).join(","));
+
 for (const room of opened) {
   try {
     await room.leave();

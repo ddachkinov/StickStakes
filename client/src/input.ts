@@ -3,10 +3,10 @@ import type { InputIntent } from "@stickstakes/shared";
 /**
  * Two thumbs, two ideas.
  *
- * LEFT half: an invisible floating stick. Put a thumb down anywhere in it and
- * that spot becomes the origin; drag right of the origin to run right, left to
- * run left. Nothing is drawn until you touch it, so the whole left half of the
- * arena stays visible while you play.
+ * LEFT half: an invisible stick that plants itself wherever your thumb first
+ * lands. That spot is the origin and it stays put — drag right of it to run
+ * right, left to run left. Nothing is drawn until you touch it, so the whole
+ * left half of the arena stays visible while you play.
  *
  * RIGHT half: two real buttons, jump and attack. That's the lot — two buttons,
  * maximum, with deliberately huge hitboxes, because people play this one-handed
@@ -48,9 +48,10 @@ export interface InputSource {
 /** Thumb travel from the origin before the stickman commits to a direction. */
 const STICK_DEADZONE = 9;
 /**
- * Past this, the origin trails the thumb. Without it, a long drag to the right
- * would need an equally long drag back before you could turn around; with it,
- * reversing always costs the same short flick.
+ * How far the thumb can get from the origin before its reported position is
+ * clamped back onto this radius. The origin itself never moves once planted,
+ * so the stick stays where you first touched down instead of sliding across
+ * the screen — reversing is always the same short flick back through centre.
  *
  * Exported because it is also the radius the renderer draws the stick at — the
  * ring is exactly the distance the thumb can get from the origin.
@@ -157,15 +158,20 @@ export function createInput(target: HTMLElement): InputSource {
 
   function onPointerMove(event: PointerEvent): void {
     if (event.pointerId === stickPointer) {
-      stick.x = event.clientX;
-      stick.y = event.clientY;
-
-      // Drag far enough and the origin follows, so you can run the full width
-      // of the arena on one thumb and still turn around instantly.
-      const dx = stick.x - stick.originX;
-      if (dx > STICK_MAX_OFFSET) stick.originX = stick.x - STICK_MAX_OFFSET;
-      else if (dx < -STICK_MAX_OFFSET) stick.originX = stick.x + STICK_MAX_OFFSET;
-      stick.originY = stick.y;
+      // The origin is pinned where the thumb first landed. Track the thumb,
+      // but never let the reported position leave the ring — a drag to the far
+      // edge of the screen still reads as "full right", from the same spot.
+      const dx = event.clientX - stick.originX;
+      const dy = event.clientY - stick.originY;
+      const dist = Math.hypot(dx, dy);
+      if (dist > STICK_MAX_OFFSET) {
+        const scale = STICK_MAX_OFFSET / dist;
+        stick.x = stick.originX + dx * scale;
+        stick.y = stick.originY + dy * scale;
+      } else {
+        stick.x = event.clientX;
+        stick.y = event.clientY;
+      }
 
       recompute();
       event.preventDefault();

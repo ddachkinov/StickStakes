@@ -5,3 +5,13 @@ dist/
 .env
 .env.local
 *.log
+
+# Local AI-assistant / editor config — not part of the project
+.claude/
+.codex/
+.cursor/
+.gemini/
+.vscode/
+.mcp.json
+AGENTS.md
+GEMINI.md

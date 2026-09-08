@@ -158,6 +158,15 @@ async function waitFor(predicate, label, timeout = 15000) {
 }
 
 console.log("\n=== a round starts ===");
+// The server only starts once the whole room — the watching page included —
+// has readied up.
+a.room.send("ready", { ready: true });
+b.room.send("ready", { ready: true });
+await page.evaluate(() => globalThis.__ss.ready(true));
+await waitFor(
+  () => [...state().players.values()].every((p) => p.ready),
+  "all ready",
+);
 await page.evaluate(() => globalThis.__ss.start());
 await waitFor(() => state().phase === "playing", "playing");
 await sleep(SPAWN_IFRAME_MS + 400);
