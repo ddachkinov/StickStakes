@@ -61,6 +61,22 @@ The ⏸ button, top right, is the way out of a game: resume, restart, back to th
 lobby, leave. Escape opens it on a keyboard. See [Pausing and
 leaving](#pausing-and-leaving).
 
+Two things about the chrome are load-bearing on a phone. The sound, fullscreen
+and menu buttons sit above the landing screen in the stacking order, because
+they belong to the whole app rather than to whichever screen is up — below it,
+the landing screen simply swallowed every tap on them and fullscreen appeared
+to be broken. And `body` sets `touch-action: none` so thumbs drive the game
+instead of scrolling the page, which means **every** real scroll container has
+to grant itself `pan-y` (or `pan-x`) explicitly and accept pointer events —
+miss either and the panel silently refuses to move under a thumb.
+
+Fullscreen goes through the `webkit`-prefixed API where that is all there is
+(Safari), and hides its button entirely where there is no element fullscreen at
+all (iPhone Safari) or where the app is already running without browser chrome
+(an installed PWA). `lib.dom` types both calls as always present, which is
+exactly the assumption that leaves an iPhone with a dead button, so `pwa.ts`
+goes through its own all-optional shapes instead.
+
 ### On a phone
 
 ```bash
@@ -166,6 +182,15 @@ I/O/0/1 in it, because these get read aloud across a noisy table.
 
 The code also goes in the URL (`?code=ABCD`), so the host can share a link
 instead of dictating letters, and a reload rejoins the same game.
+
+Both screens keep the fighter preview in landscape, laid out in two columns
+rather than dropped: the stickman you are dressing stays beside the colours and
+hats you are dressing it with, which is the whole point of having it.
+
+Leaving is on the lobby itself (**← Back to the main menu**, under the ready
+count and well clear of the two big buttons above it) as well as in the ⏸ menu.
+The menu alone was not discoverable enough for something as ordinary as
+changing your mind about a game you just created.
 
 Up to 10 players. The host — the first to join — sets rounds, lives, and the
 **stake**: free text saying what's actually riding on the match. Everyone sees

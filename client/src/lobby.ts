@@ -33,6 +33,8 @@ export interface LobbyPanel {
   onReady(handler: (ready: boolean) => void): void;
   /** Fires when the host presses the go button. */
   onStart(handler: () => void): void;
+  /** Fires when the player asks to go back to the main menu. */
+  onLeave(handler: () => void): void;
 }
 
 export interface Configure {
@@ -96,6 +98,7 @@ export function createLobbyPanel(root: ParentNode = document): LobbyPanel {
   const hintEl = root.querySelector<HTMLElement>("#lobby-hint")!;
   const readyBtn = root.querySelector<HTMLButtonElement>("#lobby-ready")!;
   const startBtn = root.querySelector<HTMLButtonElement>("#lobby-start")!;
+  const leaveBtn = root.querySelector<HTMLButtonElement>("#lobby-leave")!;
   const readyCountEl = root.querySelector<HTMLElement>("#lobby-ready-count")!;
   const heroNameEl = root.querySelector<HTMLElement>("#lobby-hero-name")!;
   const heroTagEl = root.querySelector<HTMLElement>("#lobby-hero-tag")!;
@@ -108,6 +111,7 @@ export function createLobbyPanel(root: ParentNode = document): LobbyPanel {
   let shareHandler: (() => void) | undefined;
   let readyHandler: ((ready: boolean) => void) | undefined;
   let startHandler: (() => void) | undefined;
+  let leaveHandler: (() => void) | undefined;
   let isHost = false;
   /** Last ready state the server showed us, so the button can toggle it. */
   let selfReady = false;
@@ -117,6 +121,9 @@ export function createLobbyPanel(root: ParentNode = document): LobbyPanel {
   shareBtn.addEventListener("click", () => shareHandler?.());
   readyBtn.addEventListener("click", () => readyHandler?.(!selfReady));
   startBtn.addEventListener("click", () => startHandler?.());
+  // Nobody has committed to anything in the lobby, so this asks nothing: the
+  // ⏸ menu handles the mid-match case, where leaving actually costs you.
+  leaveBtn.addEventListener("click", () => leaveHandler?.());
 
   // A calm idle stickman in the hero, wearing whatever the player has picked.
   const seedLook = loadWardrobe(PLAYER_COLORS[0]!);
@@ -279,6 +286,9 @@ export function createLobbyPanel(root: ParentNode = document): LobbyPanel {
     },
     onStart(handler) {
       startHandler = handler;
+    },
+    onLeave(handler) {
+      leaveHandler = handler;
     },
   };
 }

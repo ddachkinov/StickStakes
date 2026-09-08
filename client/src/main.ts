@@ -24,7 +24,7 @@ import { createRenderer } from "./render.js";
 import { createResultPanel, shareText } from "./result.js";
 import { share } from "./share.js";
 import { createArena, describeJoinError, joinArenaByCode, type ArenaRoom } from "./net.js";
-import { createWakeLock, registerServiceWorker } from "./pwa.js";
+import { createFullscreen, createWakeLock, registerServiceWorker } from "./pwa.js";
 import { createAudio } from "./audio.js";
 import { createFx } from "./fx.js";
 import { haptics } from "./haptics.js";
@@ -32,6 +32,7 @@ import { haptics } from "./haptics.js";
 // Installable, and instant on a repeat launch from the home screen.
 registerServiceWorker();
 const wake = createWakeLock();
+const fullscreen = createFullscreen();
 
 const audio = createAudio();
 const fx = createFx(audio);
@@ -107,10 +108,27 @@ relayout();
 window.addEventListener("resize", relayout);
 window.addEventListener("orientationchange", relayout);
 
-fullscreenBtn.addEventListener("click", () => {
-  if (document.fullscreenElement) void document.exitFullscreen();
-  else void document.documentElement.requestFullscreen?.().catch(() => {});
+/**
+ * Fullscreen, if this browser has any. Where it doesn't — an iPhone, or an
+ * already-fullscreen installed PWA — the button goes away rather than sitting
+ * there doing nothing when pressed.
+ */
+function paintFullscreenButton(): void {
+  const on = fullscreen.active;
+  fullscreenBtn.textContent = on ? "⤡" : "⛶";
+  fullscreenBtn.setAttribute("aria-pressed", String(on));
+  fullscreenBtn.setAttribute("aria-label", on ? "Leave fullscreen" : "Fullscreen");
+}
+
+fullscreenBtn.hidden = !fullscreen.supported;
+paintFullscreenButton();
+fullscreen.onChange(() => {
+  paintFullscreenButton();
+  // Entering or leaving changes the viewport without always firing `resize`
+  // first, and a canvas sized to the old box is a letterboxed arena.
+  relayout();
 });
+fullscreenBtn.addEventListener("click", () => fullscreen.toggle());
 
 /** The link that gets someone straight into this room. */
 function inviteUrl(code: string): string {
@@ -336,18 +354,23 @@ async function runSession(room: ArenaRoom): Promise<string> {
   lobby.onStart(() => room.send("startMatch"));
   result.onPlayAgain(() => room.send("startMatch"));
 
+  /**
+   * Out of the room and back to the landing screen. Their own decision, so no
+   * notice waiting for them there — and the session ends now rather than when
+   * the socket does, so the screen changes the instant they press it.
+   */
+  function leaveGame(): void {
+    endSession();
+    void room.leave();
+  }
+
   menu.on({
     restart: () => room.send("restartMatch"),
     toLobby: () => room.send("endMatch"),
     setPaused: (paused) => room.send("pause", { paused }),
-    leave: () => {
-      // Their own decision, so no notice on the landing screen — and end the
-      // session now rather than waiting for the socket, so the screen changes
-      // the instant they press it.
-      endSession();
-      void room.leave();
-    },
+    leave: leaveGame,
   });
+  lobby.onLeave(leaveGame);
   lobby.onConfigure((change) => room.send("configure", change));
   lobby.onCustomize((change) => room.send("customize", change));
   lobby.onReady((ready) => room.send("ready", { ready }));
