@@ -118,6 +118,10 @@ export function createLanding(root: ParentNode = document): Landing {
     choose() {
       el.hidden = false;
       busy(false);
+      // Coming back from a finished game: the loop was stopped on the way out.
+      // Whatever `reject()` last put in the error line stays put — it is often
+      // the reason this screen is up at all.
+      showcase.start();
       // A link with a code in it means they were invited — put the cursor
       // where they need it, which is usually "just press Join".
       (codeEl.value ? joinBtn : nameEl).focus?.();
@@ -132,7 +136,9 @@ export function createLanding(root: ParentNode = document): Landing {
     },
     hide() {
       el.hidden = true;
-      // The landing screen is done for the session — stop its animation loop.
+      errorEl.textContent = "";
+      // Off screen until someone leaves a game and comes back — no reason to
+      // keep animating a stickman nobody can see.
       showcase.stop();
     },
   };

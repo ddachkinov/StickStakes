@@ -50,6 +50,17 @@ arena on one stroke and still turn around with a short flick. Nothing is drawn
 there until you touch it. The right half keeps two real buttons, jump and
 attack; both thumbs work at once.
 
+The stick lets go of itself. A `pointerup` the browser never delivers — an OS
+gesture eating it, the tab going to the background mid-drag, capture quietly
+revoked — used to leave a direction latched and the stickman walking into a
+wall until you touched the screen again, so `input.ts` now treats every one of
+those as a release, sweeps its own held pointers once a frame, and answers
+nothing at all while a panel or the menu is up.
+
+The ⏸ button, top right, is the way out of a game: resume, restart, back to the
+lobby, leave. Escape opens it on a keyboard. See [Pausing and
+leaving](#pausing-and-leaving).
+
 ### On a phone
 
 ```bash
@@ -76,7 +87,7 @@ talking to each other.
 
 ```bash
 npm run dev    # in one terminal
-npm test       # in another — maps, lobby, match, combat, feel
+npm test       # in another — maps, lobby, match, combat, menu, feel
 ```
 
 - **`test:maps`** — the one suite that needs no server: it runs the shared
@@ -93,6 +104,10 @@ npm test       # in another — maps, lobby, match, combat, feel
   round scoring, the match winner, and replay.
 - **`test:combat`** — damage accrual, knockback direction and scaling against
   the formula, hitstun, one hit per swing, i-frames, and death by knockback.
+- **`test:menu`** — the pause menu's server side: the solo pause really stops
+  the world (and holds every phase deadline with it), a second player in the
+  room refuses one, `restartMatch` and `endMatch` are host-only, and a fighter
+  who quits mid-match is turned away at the door until it ends.
 - **`test:feel`** — drives a real fight in front of a real headless browser and
   asserts the *feedback* fired: hits counted, sparks spawned, the camera
   actually moved, audio unlocked, mute remembered. Feedback has no server-side
@@ -161,6 +176,53 @@ That layer is a **joke tracker and nothing else**. No amounts are stored, sent
 or settled; the split helper divides a number the user types and shows the
 answer. The moment real money moves through it, it becomes a gambling product
 with the app-store and payment-services rules that implies.
+
+## Pausing and leaving
+
+The ⏸ button, top right of any game, opens a card with the four things anyone
+ever wants out of one. It is the highest thing on screen on purpose — above even
+the portrait "turn your phone" takeover, because that is precisely when someone
+wants a way out.
+
+**Pausing is solo-only.** Alone in a room, opening the menu asks the server to
+hold the world: every body frozen, and every deadline in it — the countdown, a
+respawn timer, spawn i-frames — pushed along with the tick so the pause costs
+the match nothing. Closing the card resumes. With anybody else in the room the
+server refuses, the card says so, and the fight carries on without you: one
+person's menu has no business stopping four other people's game.
+
+The freeze rides on the synced `frozen` flag rather than a stop of the
+simulation, which is what keeps the client honest — the reconciler predicts a
+paused stickman exactly as still as the server simulates it, so there is nothing
+to snap back from on resume. `tick` keeps advancing throughout, because that is
+what acknowledges client input; stopping it would pile up unacknowledged frames
+for the length of the pause.
+
+**The host can bail out of a match.** `restartMatch` throws the current one away
+and runs the same setup again from round one — the answer to "this one stinks".
+`endMatch` goes further and puts the room back in the lobby, where the rules and
+the map can be changed first. Neither asks for a fresh round of readies:
+everyone opted in when the match started, and a host who has to chase five
+people for a second ready would just close the tab instead.
+
+**Leaving a live match costs you the match.** Quitting mid-fight and rejoining
+would hand you a full set of lives and wipe the damage you were carrying, which
+is the cheapest imaginable way to escape a losing round — so the server locks a
+departed fighter out until the match ends, or until the host takes the room back
+to the lobby. The client warns before it happens and asks a second time.
+
+The lockout is keyed on a random id the browser makes once and keeps
+(`stickstakes:token`, sent with every join). Session ids are new on every
+connection, so there is no other way to tell a returning quitter from a
+stranger. It is not an account, it carries nothing about anyone, and a
+determined client can forge one — it is a rule for a game among friends, not a
+security boundary. Spectators are exempt: someone who followed a link into a
+match in progress and lost their connection has nothing to gain by coming back,
+and shutting them out would only punish a bad tunnel.
+
+Leaving puts the landing screen back up rather than dead-ending on a
+"disconnected" line, so one page load can play any number of games. A dropped
+connection lands in the same place, with a line saying what happened.
 
 ## Combat
 

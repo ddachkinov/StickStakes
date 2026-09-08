@@ -419,6 +419,181 @@ body {
   opacity: 0.5;
 }
 
+/* ================================================================ the menu */
+
+/* Third in the top-right row, and deliberately the highest thing on screen:
+   the way out has to work even under the portrait "turn your phone" takeover,
+   which is exactly when someone wants it. */
+#pause {
+  position: fixed;
+  z-index: 10;
+  top: var(--safe-t);
+  right: calc(var(--safe-r) + 80px);
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--stroke);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1;
+}
+
+@supports (backdrop-filter: blur(6px)) {
+  #pause {
+    backdrop-filter: blur(10px);
+  }
+}
+
+#pause:active {
+  transform: translateY(1px);
+}
+
+#pause[hidden] {
+  display: none;
+}
+
+#pause[aria-expanded="true"] {
+  background: var(--surface-2);
+  border-color: var(--stroke-2);
+}
+
+#menu {
+  position: fixed;
+  z-index: 10;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--gap-4);
+  /* Dim the fight behind it, so the card reads without stealing the screen. */
+  background: rgba(8, 10, 14, 0.72);
+}
+
+#menu[hidden] {
+  display: none;
+}
+
+#menu-card {
+  width: min(340px, 100%);
+  max-height: calc(100dvh - 2 * var(--gap-4));
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-3);
+  padding: var(--gap-4);
+  border-radius: var(--r-3);
+  background: linear-gradient(180deg, rgba(28, 35, 51, 0.96), rgba(13, 16, 22, 0.97));
+  border: 1px solid var(--stroke-2);
+  box-shadow: var(--shadow);
+}
+
+@supports (backdrop-filter: blur(6px)) {
+  #menu-card {
+    backdrop-filter: blur(18px) saturate(1.1);
+  }
+}
+
+#menu-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+#menu-title {
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+}
+
+#menu-sub {
+  font-size: 12px;
+  color: var(--dim);
+}
+
+#menu-sub:empty {
+  display: none;
+}
+
+#menu-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-2);
+}
+
+.menu-btn {
+  padding: 12px 14px;
+  border-radius: var(--r-2);
+  border: 1px solid var(--stroke-2);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 700;
+  text-align: center;
+}
+
+.menu-btn[hidden] {
+  display: none;
+}
+
+.menu-btn:active {
+  transform: translateY(1px);
+}
+
+.menu-btn.is-primary {
+  background: var(--ink);
+  border-color: transparent;
+  color: #10141b;
+}
+
+/* Leaving is the one destructive thing on the card, so it looks like it —
+   and once it is armed for a match you can't rejoin, it looks like it twice. */
+.menu-btn.is-leave {
+  color: #ff8a8f;
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+.menu-btn.is-leave.is-armed {
+  background: var(--accent);
+  border-color: transparent;
+  color: var(--accent-ink);
+}
+
+#menu-warn {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--dim);
+  text-align: center;
+}
+
+#menu-warn[hidden] {
+  display: none;
+}
+
+/* Landscape phone: the card competes with the fight for a very short screen,
+   so lay the buttons out in a grid instead of a tower. */
+@media (max-height: 460px) {
+  #menu-card {
+    width: min(460px, 100%);
+    gap: var(--gap-2);
+    padding: var(--gap-3);
+  }
+
+  #menu-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .menu-btn {
+    padding: 10px 12px;
+  }
+
+  #menu-title {
+    font-size: 17px;
+  }
+}
+
 /* ============================================================ shared panel */
 
 /* Section label, used across every panel. */

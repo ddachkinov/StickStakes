@@ -108,6 +108,13 @@ export const ArenaState = schema(
     phase: t.string().default("lobby"),
     /** Session id of the host — the only client whose start/replay buttons work. */
     hostId: t.string().default(""),
+    /**
+     * Solo pause. Only ever set when there is exactly one player in the room:
+     * with company, one person's menu must not stop everyone else's fight, so
+     * the menu is purely local for them. While this is true the world holds
+     * still — every body frozen, every phase timer parked.
+     */
+    paused: t.boolean().default(false),
     /** 1-based; which round of the match is being played or was just played. */
     round: t.uint8().default(0),
     totalRounds: t.uint8().default(TOTAL_ROUNDS),

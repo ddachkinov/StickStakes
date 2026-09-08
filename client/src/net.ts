@@ -1,5 +1,5 @@
 import { Client, type Room } from "@colyseus/sdk";
-import { ArenaState, ROOM_NAME } from "@stickstakes/shared";
+import { ArenaState, LEFT_MID_MATCH_MESSAGE, ROOM_NAME } from "@stickstakes/shared";
 
 /**
  * One URL to share, one origin to reach — which is what makes a tunnel link
@@ -22,6 +22,31 @@ export function createClient(): Client {
 
 export type ArenaRoom = Room<unknown, ArenaState>;
 
+const TOKEN_KEY = "stickstakes:token";
+
+/**
+ * This browser's own id, made once and kept.
+ *
+ * The server needs *something* stable to recognise a player across a
+ * reconnect: session ids are new every time, so without this, quitting a match
+ * and rejoining is indistinguishable from a stranger arriving. It is not an
+ * account and carries nothing about anyone — its only job is to hold a quitter
+ * out of the match they walked away from. Storage that refuses to cooperate
+ * (private mode, a locked-down browser) just means a fresh id per load, which
+ * costs nothing but the lockout.
+ */
+export function clientToken(): string {
+  try {
+    const saved = localStorage.getItem(TOKEN_KEY);
+    if (saved) return saved;
+    const made = crypto.randomUUID();
+    localStorage.setItem(TOKEN_KEY, made);
+    return made;
+  } catch {
+    return crypto.randomUUID();
+  }
+}
+
 /** Cosmetic pick sent with the join; the server validates every field. */
 export interface Wardrobe {
   color: string;
@@ -30,7 +55,11 @@ export interface Wardrobe {
 
 /** Start a new game. The server assigns the room a 4-letter code as its id. */
 export async function createArena(name: string, wardrobe?: Wardrobe): Promise<ArenaRoom> {
-  return createClient().create<ArenaState>(ROOM_NAME, { name, ...wardrobe }, ArenaState);
+  return createClient().create<ArenaState>(
+    ROOM_NAME,
+    { name, token: clientToken(), ...wardrobe },
+    ArenaState,
+  );
 }
 
 /** Join an existing game by its code. */
@@ -39,7 +68,11 @@ export async function joinArenaByCode(
   name: string,
   wardrobe?: Wardrobe,
 ): Promise<ArenaRoom> {
-  return createClient().joinById<ArenaState>(code, { name, ...wardrobe }, ArenaState);
+  return createClient().joinById<ArenaState>(
+    code,
+    { name, token: clientToken(), ...wardrobe },
+    ArenaState,
+  );
 }
 
 /**
@@ -49,6 +82,9 @@ export async function joinArenaByCode(
  */
 export function describeJoinError(error: unknown, code: string): string {
   const message = error instanceof Error ? error.message : String(error);
+  // The server's own words for a mid-match rejoin — it explains the rule
+  // better than "couldn't join" ever could, so pass it straight through.
+  if (message.includes(LEFT_MID_MATCH_MESSAGE)) return LEFT_MID_MATCH_MESSAGE;
   if (/not found/i.test(message)) return `No game called ${code}. Check the code?`;
   if (/locked|full/i.test(message)) return `Game ${code} is full.`;
   return `Couldn't join ${code}. ${message}`;

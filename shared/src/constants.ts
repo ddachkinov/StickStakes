@@ -30,6 +30,39 @@ export const MIN_PLAYERS = 2;
  */
 export type MatchPhase = "lobby" | "countdown" | "playing" | "roundOver" | "matchOver";
 
+/**
+ * The phases in which a match is actually under way. The room is closed to
+ * anyone who walked out of one of these, and the pause menu offers the host
+ * the restart / back-to-lobby exits only while the room is in one of them.
+ */
+export const LIVE_PHASES: readonly MatchPhase[] = ["countdown", "playing", "roundOver"];
+
+/** Is the fight on? (As opposed to sitting in the lobby or on the end card.) */
+export const isLivePhase = (phase: string): boolean =>
+  LIVE_PHASES.includes(phase as MatchPhase);
+
+/**
+ * A player's own id, kept in their browser and sent with every join.
+ *
+ * The session id is no use for this: it is new on every connection, so the
+ * moment someone quits and comes back the server cannot tell it is them. This
+ * is only ever used to hold a quitter out of the match they abandoned — it is
+ * not an account, and a client is free to forge one.
+ */
+export const MAX_CLIENT_TOKEN_LENGTH = 64;
+
+/**
+ * Close code for "you left this match, you don't get to come back mid-fight".
+ * Above 4000, which WebSocket reserves for the application; the client matches
+ * on the message rather than the number, but a distinct code keeps the server
+ * logs readable.
+ */
+export const ERR_LEFT_MID_MATCH = 4200;
+
+/** What the server says when it turns a quitter away. The client shows this. */
+export const LEFT_MID_MATCH_MESSAGE =
+  "You left this match — you can rejoin when it ends.";
+
 /** Default match rules. The host can change these from the lobby. */
 export const TOTAL_ROUNDS = 3;
 export const LIVES_PER_ROUND = 3;

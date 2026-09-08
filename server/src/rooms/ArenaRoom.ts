@@ -1,4 +1,4 @@
-import { Room, matchMaker, type Client, logger } from "@colyseus/core";
+import { Room, ServerError, matchMaker, type Client, logger } from "@colyseus/core";
 import {
   ArenaState,
   ATTACK_ACTIVE_MS,
@@ -9,6 +9,7 @@ import {
   DEFAULT_HAT,
   DEFAULT_MAP_ID,
   DEFAULT_STAKE,
+  ERR_LEFT_MID_MATCH,
   HITSTUN_BASE_MS,
   HITSTUN_MAX_MS,
   HITSTUN_PER_DAMAGE_MS,
@@ -18,8 +19,10 @@ import {
   KNOCKBACK_SCALING,
   KNOCKBACK_UP_RATIO,
   FightInput,
+  LEFT_MID_MATCH_MESSAGE,
   LIVES_OPTIONS,
   LIVES_PER_ROUND,
+  MAX_CLIENT_TOKEN_LENGTH,
   MAX_DAMAGE,
   MAX_NAME_LENGTH,
   MAX_STAKE_LENGTH,
@@ -42,6 +45,7 @@ import {
   getMap,
   isHatId,
   isHexColor,
+  isLivePhase,
   isMapId,
   msToTicks,
   overlapsRect,
@@ -77,6 +81,11 @@ interface Customize {
  *   lobby ──host starts──> countdown ──> playing ──> roundOver ─┬─> countdown
  *     ^                                                          └─> matchOver
  *     └──────────────────── host plays again ────────────────────────┘
+ *
+ * The host can also bail out of a live match from the pause menu, either
+ * straight back into a fresh countdown (`restartMatch`) or all the way back to
+ * the lobby (`endMatch`), which is the only way to reopen the room to someone
+ * who quit part-way through.
  */
 export class ArenaRoom extends Room<{ state: ArenaState; input: FightInput }> {
   maxClients = MAX_PLAYERS;
@@ -103,6 +112,29 @@ export class ArenaRoom extends Room<{ state: ArenaState; input: FightInput }> {
    * swing. Server-local and transient — it never needs to reach a client.
    */
   private hitThisSwing = new Map<string, Set<string>>();
+
+  /**
+   * Each connected client's own id, as remembered by their browser. The
+   * session id is useless for telling people apart across a reconnect — it is
+   * new every time — so this is what the quit lockout below is keyed on.
+   */
+  private tokens = new Map<string, string>();
+
+  /**
+   * Tokens of the fighters who walked out of the match that is running now.
+   * They stay locked out until it ends, or until the host takes the room back
+   * to the lobby. Rejoining mid-match would hand them a full set of lives and
+   * wipe the damage they were carrying, which is the cheapest imaginable way
+   * to escape a losing round.
+   */
+  private quitters = new Set<string>();
+
+  /**
+   * Each player's `frozen` flag as it was the moment the room was paused, so
+   * resuming puts everyone back exactly as they were — a corpse mid-respawn
+   * stays a corpse, a fighter goes straight back to fighting.
+   */
+  private frozenBeforePause = new Map<string, boolean>();
 
   async onCreate() {
     // A short, speakable room code instead of Colyseus's generated id, so the
@@ -192,8 +224,56 @@ export class ArenaRoom extends Room<{ state: ArenaState; input: FightInput }> {
       if (isHatId(message?.hat)) player.hat = message.hat;
     });
 
+    /**
+     * Host-only bail-outs from a live match, both driven from the pause menu.
+     *
+     * `restartMatch` throws the current match away and starts the same setup
+     * again from round one — the answer to "this one stinks". `endMatch` goes
+     * further and puts the room back in the lobby, where the rules and the map
+     * can be changed before the next one. Neither asks for readies: everyone
+     * already opted in when this match started, and a host who cannot restart
+     * without chasing five people for a second ready would just leave instead.
+     */
+    this.onMessage("restartMatch", (client) => {
+      if (client.sessionId !== this.state.hostId) return;
+      if (!isLivePhase(this.state.phase)) return;
+      this.setPaused(false);
+      this.resetMatch();
+      // The match somebody walked out of is gone, so their lockout goes with it.
+      this.reopenRoom();
+      this.startCountdown();
+      logger.info(`[arena] room ${this.roomId} restarted by the host`);
+    });
+
+    this.onMessage("endMatch", (client) => {
+      if (client.sessionId !== this.state.hostId) return;
+      if (this.state.phase === "lobby") return;
+      this.setPaused(false);
+      this.returnToLobby();
+      logger.info(`[arena] room ${this.roomId} sent back to the lobby by the host`);
+    });
+
+    /**
+     * Pause. Deliberately solo-only: pausing is stopping the world, and one
+     * person's menu has no business stopping four other people's fight. With
+     * company the menu is a purely local overlay and the fight carries on
+     * without you — which is the honest trade, and it is what the menu says.
+     */
+    this.onMessage("pause", (client, message?: { paused?: boolean }) => {
+      if (!this.state.players.has(client.sessionId)) return;
+      if (!isLivePhase(this.state.phase)) return;
+      if (this.state.players.size > 1) return;
+      this.setPaused(
+        typeof message?.paused === "boolean" ? message.paused : !this.state.paused,
+      );
+    });
+
     this.setFixedTimestep((ctx) => {
       this.state.tick++;
+      if (this.state.paused) {
+        this.holdPaused();
+        return;
+      }
       this.stepPlayers(ctx.dt);
       // Hits resolve after every body has moved, so a tick sees one consistent
       // world rather than positions half-updated in map order.
@@ -232,7 +312,18 @@ export class ArenaRoom extends Room<{ state: ArenaState; input: FightInput }> {
     return getMap(this.state.mapId);
   }
 
-  onJoin(client: Client, options?: { name?: string; color?: string; hat?: string }) {
+  onJoin(
+    client: Client,
+    options?: { name?: string; color?: string; hat?: string; token?: string },
+  ) {
+    // Turned away before anything is touched: a quitter does not get to walk
+    // back into the match they abandoned. Checked first so a refused join
+    // leaves the room exactly as it found it.
+    const token = String(options?.token ?? "").slice(0, MAX_CLIENT_TOKEN_LENGTH);
+    if (token && this.quitters.has(token) && isLivePhase(this.state.phase)) {
+      throw new ServerError(ERR_LEFT_MID_MATCH, LEFT_MID_MATCH_MESSAGE);
+    }
+
     const slot = this.nextSlot++ % SPAWN_POINTS.length;
     // A match already in progress: sit this round out, join at the next one.
     const midMatch = this.state.phase !== "lobby";
@@ -252,7 +343,10 @@ export class ArenaRoom extends Room<{ state: ArenaState; input: FightInput }> {
     });
 
     this.state.players.set(client.sessionId, player);
+    if (token) this.tokens.set(client.sessionId, token);
     if (!this.state.hostId) this.state.hostId = client.sessionId;
+    // A pause is a solo privilege, and this room is no longer solo.
+    this.setPaused(false);
 
     logger.info(
       `[arena] ${player.name} (${client.sessionId}) joined` +
@@ -261,18 +355,91 @@ export class ArenaRoom extends Room<{ state: ArenaState; input: FightInput }> {
   }
 
   onLeave(client: Client) {
+    const player = this.state.players.get(client.sessionId);
+    const token = this.tokens.get(client.sessionId);
+
+    // Walked out of a live match as a fighter: locked out until it is over.
+    // Spectators are let off — someone who followed a link into a match in
+    // progress and lost their connection has nothing to gain by coming back,
+    // and shutting them out would only punish a bad tunnel.
+    if (token && player && !player.spectating && isLivePhase(this.state.phase)) {
+      this.quitters.add(token);
+      logger.info(`[arena] ${player.name} quit round ${this.state.round} — locked out`);
+    }
+
     this.state.players.delete(client.sessionId);
     this.hitThisSwing.delete(client.sessionId);
+    this.tokens.delete(client.sessionId);
+    this.frozenBeforePause.delete(client.sessionId);
 
     // Hand the host role to whoever is still here, so the match isn't stuck.
     if (this.state.hostId === client.sessionId) {
       this.state.hostId = this.state.players.keys().next().value ?? "";
     }
+    // Nobody left to lift it, and an empty room must not sit frozen if someone
+    // walks back in.
+    if (this.state.players.size === 0) this.setPaused(false);
     // A round that just lost its last opponent is resolved by updatePhase().
   }
 
   onDispose() {
     logger.info(`[arena] room ${this.roomId} disposed`);
+  }
+
+  // ----------------------------------------------------------------- pause
+
+  /**
+   * Stop (or restart) the world. Freezing every body is what makes the pause
+   * honest on the client too: `frozen` is a synced field, so the reconciler
+   * predicts a paused stickman exactly as still as the server simulates it,
+   * with no drift to snap back from when play resumes.
+   */
+  private setPaused(paused: boolean) {
+    if (paused === this.state.paused) return;
+    this.state.paused = paused;
+
+    if (paused) {
+      this.frozenBeforePause.clear();
+      for (const [sessionId, player] of this.state.players) {
+        this.frozenBeforePause.set(sessionId, player.frozen);
+        player.frozen = true;
+      }
+      logger.info(`[arena] room ${this.roomId} paused`);
+      return;
+    }
+
+    for (const [sessionId, player] of this.state.players) {
+      // Anyone who joined during the pause was never in the map; they are
+      // frozen for their own reasons (spectating) and stay that way.
+      const was = this.frozenBeforePause.get(sessionId);
+      if (was !== undefined) player.frozen = was;
+    }
+    this.frozenBeforePause.clear();
+    logger.info(`[arena] room ${this.roomId} resumed`);
+  }
+
+  /**
+   * One tick of a paused room.
+   *
+   * `tick` still advances, because it is what acknowledges client input — stop
+   * it and every phone in the room piles up unacknowledged frames for as long
+   * as the menu is open. So instead, every deadline in the world moves along
+   * with it: the pause costs the match nothing, no countdown eaten, no respawn
+   * served early, no invulnerability burned standing still.
+   */
+  private holdPaused() {
+    if (this.state.phaseEndsAtTick) this.state.phaseEndsAtTick++;
+
+    for (const [sessionId, player] of this.state.players) {
+      if (player.deadUntilTick) player.deadUntilTick++;
+      if (player.invulnUntilTick) player.invulnUntilTick++;
+      if (player.attackUntilTick) player.attackUntilTick++;
+      if (player.stunUntilTick) player.stunUntilTick++;
+      // Drain the buffer without simulating it. The body is frozen, so these
+      // inputs would do nothing anyway — but consuming them is what keeps the
+      // client's in-flight queue from growing for the length of the pause.
+      this.inputs.get(sessionId).next();
+    }
   }
 
   // --------------------------------------------------------------- physics
@@ -548,6 +715,9 @@ export class ArenaRoom extends Room<{ state: ArenaState; input: FightInput }> {
       this.state.matchWinnerId = champion ?? this.leaderOnRoundWins() ?? "";
       this.state.phase = "matchOver";
       this.state.phaseEndsAtTick = 0;
+      // The match is done, so the door reopens: whoever quit can come back for
+      // the next one.
+      this.reopenRoom();
       logger.info(`[arena] match over — winner ${this.state.matchWinnerId || "(draw)"}`);
       return;
     }
@@ -560,6 +730,38 @@ export class ArenaRoom extends Room<{ state: ArenaState; input: FightInput }> {
     this.state.matchWinnerId = "";
     this.state.lastRoundWinnerId = "";
     for (const player of this.state.players.values()) player.roundWins = 0;
+  }
+
+  /**
+   * Abandon whatever is running and put the room back where it started: the
+   * lobby, with the setup open and everyone un-readied. This is also the one
+   * door back in for anyone who quit — the match they walked out of no longer
+   * exists, so there is nothing left to lock them out of.
+   */
+  private returnToLobby() {
+    this.state.phase = "lobby";
+    this.state.phaseEndsAtTick = 0;
+    this.resetMatch();
+    this.reopenRoom();
+
+    for (const player of this.state.players.values()) {
+      player.ready = false;
+      player.spectating = false;
+      player.lives = 0;
+      player.damage = 0;
+      player.deadUntilTick = 0;
+      player.invulnUntilTick = 0;
+      player.attackUntilTick = 0;
+      player.stunUntilTick = 0;
+      // Clears `frozen` and `stunned` too, so everyone can mill about again.
+      respawnBody(player, player.slot, this.map.spawns);
+    }
+    this.hitThisSwing.clear();
+  }
+
+  /** The match is over (or abandoned): let the quitters back in. */
+  private reopenRoom() {
+    this.quitters.clear();
   }
 
   // ---------------------------------------------------------------- helpers
