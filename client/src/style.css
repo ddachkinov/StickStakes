@@ -464,7 +464,7 @@ body {
   height: 100%;
 }
 
-#lobby-hero,
+#lobby-preview,
 .landing-hero {
   display: flex;
   flex-direction: column;
@@ -531,6 +531,30 @@ body {
   pointer-events: auto;
 }
 
+/* ---- lobby shell: preview pane + a controls column that owns its own
+   scroll and the pinned ready / start button. Portrait stacks the two;
+   the wide layout below turns them into side-by-side columns. ---- */
+
+#lobby-preview {
+  flex: none;
+  padding: var(--gap-4) var(--gap-4) 0;
+}
+
+/* Portrait: the preview stays pinned above the scrolling controls, so keep
+   the showcase compact enough to leave the setup room to breathe. The wide
+   layout below overrides this to fill the column. */
+#lobby-preview .hero-stage {
+  max-height: 132px;
+}
+
+#lobby-main {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 #lobby-scroll,
 #result-scroll {
   flex: 1 1 auto;
@@ -541,12 +565,17 @@ body {
   display: flex;
   flex-direction: column;
   gap: var(--gap-3);
+  padding: var(--gap-3) var(--gap-4);
+}
+
+#result-scroll {
   padding: var(--gap-4) var(--gap-4) var(--gap-3);
 }
 
 /* Grid/flex children must be allowed to shrink below their content, or a
    non-wrapping strip (the wardrobe rows) blows a column out. */
 #lobby-scroll > *,
+#lobby-preview > *,
 #result-scroll > * {
   min-width: 0;
 }
@@ -1259,52 +1288,64 @@ button:disabled {
 
 /* ============================================================= adaptive tweaks */
 
-/* Landscape phone: short viewport, the orientation the fight is played in.
-   Give the panels two columns so nothing needs a long scroll. */
+/* Wide lobby: the fighter showcase becomes a full-height pane on the left,
+   the room code + match setup a scrolling column on the right, and the
+   ready / start button sits pinned right under those controls. Kicks in as
+   soon as there's room for two columns — landscape phones and up. */
+@media (min-width: 720px) {
+  #lobby {
+    width: min(900px, calc(100vw - 24px));
+    flex-direction: row;
+    align-items: stretch;
+  }
+
+  #lobby-preview {
+    flex: 0 0 clamp(220px, 30%, 292px);
+    padding: var(--gap-4);
+    border-right: 1px solid var(--stroke);
+    background: rgba(0, 0, 0, 0.22);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  /* Let the showcase fill the column instead of the portrait 16/9 letterbox. */
+  #lobby-preview .hero-stage {
+    flex: 1 1 auto;
+    aspect-ratio: auto;
+    max-height: none;
+    min-height: 180px;
+  }
+
+  #lobby-preview .hero-meta {
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: 2px;
+  }
+
+  #lobby-main {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  #lobby-scroll {
+    padding: var(--gap-4) var(--gap-4) var(--gap-3);
+  }
+}
+
+/* Landscape phone: the result card also splits into two columns so nothing
+   needs a long scroll. (The lobby handles this on its own, above.) */
 @media (min-width: 620px) and (max-height: 560px) {
-  #lobby,
   #result {
     width: min(760px, calc(100vw - 16px));
   }
 
-  #lobby-scroll,
   #result-scroll {
     display: grid;
     grid-template-columns: 1fr 1fr;
     align-content: start;
     gap: var(--gap-2) var(--gap-4);
     padding: var(--gap-3) var(--gap-3) var(--gap-2);
-  }
-
-  #lobby-hero,
-  #lobby-code,
-  #lobby-wardrobe {
-    grid-column: 1;
-  }
-
-  #lobby-setup {
-    grid-column: 2;
-    grid-row: 1 / span 3;
-  }
-
-  /* The fighter showcase is a portrait luxury; a landscape phone has no room
-     for it. Keep the name/role line. */
-  #lobby-hero .hero-stage,
-  .hero-stage-win {
-    display: none;
-  }
-
-  #lobby-hero {
-    gap: 0;
-  }
-
-  #lobby-setup {
-    gap: var(--gap-2);
-  }
-
-  .map-chip-name {
-    min-height: 1.2em;
-    font-size: 10px;
   }
 
   #result-hero {
@@ -1318,6 +1359,11 @@ button:disabled {
   #result-split {
     grid-column: 2;
     align-self: start;
+  }
+
+  .map-chip-name {
+    min-height: 1.2em;
+    font-size: 10px;
   }
 
   /* Landing: no room for the full stack; drop the showcase and tagline. */

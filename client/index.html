@@ -35,63 +35,65 @@
       <div id="bigtext-sub"></div>
     </div>
 
-    <!-- Lobby: your fighter, the code to read across the table, and the setup. -->
+    <!-- Lobby: your fighter on the left, the room code and match setup on the
+         right, with the ready / start button pinned under the controls. -->
     <div id="lobby" hidden>
-      <div id="lobby-scroll">
-        <header id="lobby-hero">
-          <div class="hero-stage">
-            <canvas id="lobby-fighter" class="fighter-canvas"></canvas>
-          </div>
-          <div class="hero-meta">
-            <span class="hero-name" id="lobby-hero-name">You</span>
-            <span class="hero-tag" id="lobby-hero-tag">picking a look…</span>
-          </div>
-        </header>
-
-        <div id="lobby-code">
-          <div class="lobby-code-main">
-            <span class="label">Room code</span>
-            <strong id="lobby-code-value">····</strong>
-          </div>
-          <button id="lobby-share" type="button">
-            <span aria-hidden="true">↗</span> Share
-          </button>
+      <aside id="lobby-preview">
+        <div class="hero-stage">
+          <canvas id="lobby-fighter" class="fighter-canvas"></canvas>
         </div>
-
-        <div id="lobby-setup">
-          <div class="setup-field">
-            <span class="label">Rounds</span>
-            <div id="setup-rounds" class="segmented"></div>
-          </div>
-          <div class="setup-field">
-            <span class="label">Lives</span>
-            <div id="setup-lives" class="segmented"></div>
-          </div>
-          <div class="setup-field setup-map-field">
-            <span class="label">World</span>
-            <div id="setup-map" class="map-grid"></div>
-            <span id="setup-map-blurb" class="setup-hint"></span>
-          </div>
-          <div class="setup-field setup-stake-field">
-            <span class="label">Playing for</span>
-            <input id="setup-stake" type="text" maxlength="80" placeholder="Loser buys lunch" />
-          </div>
+        <div class="hero-meta">
+          <span class="hero-name" id="lobby-hero-name">You</span>
+          <span class="hero-tag" id="lobby-hero-tag">picking a look…</span>
         </div>
-
         <div class="wardrobe wardrobe-row" id="lobby-wardrobe">
           <span class="label">Your fighter</span>
           <div class="strip swatches" id="lobby-wardrobe-colors"></div>
           <div class="strip chips" id="lobby-wardrobe-hats"></div>
         </div>
-      </div>
+      </aside>
 
-      <div id="lobby-foot">
-        <button id="lobby-start" type="button" class="lobby-cta is-start" hidden>Start match</button>
-        <button id="lobby-ready" type="button" class="lobby-cta">Ready up</button>
-        <p id="lobby-foot-meta">
-          <span id="lobby-ready-count"></span>
-          <span id="lobby-hint"></span>
-        </p>
+      <div id="lobby-main">
+        <div id="lobby-scroll">
+          <div id="lobby-code">
+            <div class="lobby-code-main">
+              <span class="label">Room code</span>
+              <strong id="lobby-code-value">····</strong>
+            </div>
+            <button id="lobby-share" type="button">
+              <span aria-hidden="true">↗</span> Share
+            </button>
+          </div>
+
+          <div id="lobby-setup">
+            <div class="setup-field">
+              <span class="label">Rounds</span>
+              <div id="setup-rounds" class="segmented"></div>
+            </div>
+            <div class="setup-field">
+              <span class="label">Lives</span>
+              <div id="setup-lives" class="segmented"></div>
+            </div>
+            <div class="setup-field setup-map-field">
+              <span class="label">World</span>
+              <div id="setup-map" class="map-grid"></div>
+              <span id="setup-map-blurb" class="setup-hint"></span>
+            </div>
+            <div class="setup-field setup-stake-field">
+              <span class="label">Playing for</span>
+              <input id="setup-stake" type="text" maxlength="80" placeholder="Loser buys lunch" />
+            </div>
+          </div>
+        </div>
+
+        <div id="lobby-foot">
+          <button id="lobby-start" type="button" class="lobby-cta is-start" hidden>Start match</button>
+          <button id="lobby-ready" type="button" class="lobby-cta">Ready up</button>
+          <p id="lobby-foot-meta">
+            <span id="lobby-ready-count"></span>
+            <span id="lobby-hint"></span>
+          </p>
+        </div>
       </div>
     </div>
 
