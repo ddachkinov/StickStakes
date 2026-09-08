@@ -223,21 +223,49 @@ if (def().lives > 0) {
 }
 
 console.log("\n=== knockback scales with damage ===");
-// Drive the defender's damage up, sampling launch speed at low vs high %.
+/**
+ * Drive the defender's damage up, sampling launch speed at low vs high %.
+ *
+ * The section is deliberately patient about *how* it gets its samples, because
+ * the property under test fights the harness: every hit throws the defender
+ * further than the last, so each successive approach is a longer walk. Three
+ * rules keep that from turning into a flaky suite.
+ *
+ *  - A failed approach costs one attempt, never the section. An early launch
+ *    toward a far ledge (or off the map, which respawns the defender at 0%)
+ *    used to end the run with one sample and fail on the count alone.
+ *  - The walk gets a budget that suits the last launch, not the first.
+ *  - Enough attempts and wall-clock room to reach a comfortable margin over
+ *    the two samples the comparison actually needs.
+ *
+ * The assertions below are unchanged: a shortfall still fails loudly, because
+ * failing to land two hits in this long really would mean combat is broken.
+ */
+const SAMPLE_TARGET = 4;
+const SAMPLE_DEADLINE = Date.now() + 75_000;
 const samples = [];
-for (let i = 0; i < 8 && def().lives > 0; i++) {
+
+for (let i = 0; i < 12; i++) {
+  if (samples.length >= SAMPLE_TARGET || Date.now() > SAMPLE_DEADLINE) break;
+  if (def().lives === 0) break;
+
   await waitFor(() => !def().stunned, "stun clear", 4000).catch(() => {});
   await waitFor(() => def().grounded, "landing", 6000).catch(() => {});
   if (def().lives === 0) break;
+
   try {
-    await closeIn(4000);
+    // Generous: after a hit at high damage the defender can be
+    // *most of the arena* away, and the attacker gets there on foot.
+    await closeIn(8000);
   } catch {
-    break;
+    continue; // out of reach this time; let it settle and try again
   }
+
   const dmgBefore = def().damage;
   const { dealt: got } = await swing();
   if (got > 0) samples.push({ damage: dmgBefore + got, vx: Math.abs(def().vx) });
 }
+
 console.log(
   "   samples: " + samples.map((s) => `${s.damage}%→${Math.round(s.vx)}px/s`).join("  "),
 );
