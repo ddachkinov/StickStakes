@@ -1,5 +1,6 @@
 import { Room, matchMaker, type Client, logger } from "@colyseus/core";
 import {
+  ARENA_WIDTH,
   ArenaState,
   ATTACK_ACTIVE_MS,
   ATTACK_RECOVERY_MS,
@@ -26,17 +27,30 @@ import {
   MAX_PLAYERS,
   MIN_PLAYERS,
   PLAYER_COLORS,
+  PLAYER_HEIGHT,
+  PLAYER_WIDTH,
   Player,
+  Projectile,
   RESPAWN_DELAY_MS,
   ROOM_CODE_ALPHABET,
   ROOM_CODE_LENGTH,
   ROUND_OPTIONS,
   ROUND_OVER_MS,
   ROUND_WINS_TO_TAKE_MATCH,
+  SHOT_COOLDOWN_MS,
+  SHOT_DAMAGE,
+  SHOT_RADIUS,
+  SHOT_SPEED,
   SPAWN_IFRAME_MS,
   SPAWN_POINTS,
   TICK_RATE,
   TOTAL_ROUNDS,
+  WEAPON_HOLD_MS,
+  WEAPON_HOVER,
+  WEAPON_MIN_SURFACE_WIDTH,
+  WEAPON_PICKUP_RADIUS,
+  WEAPON_SPAWN_MAX_MS,
+  WEAPON_SPAWN_MIN_MS,
   attackHitbox,
   bodyAabb,
   getMap,
@@ -107,6 +121,17 @@ export class ArenaRoom extends Room<{ state: ArenaState; input: FightInput }> {
    * swing. Server-local and transient — it never needs to reach a client.
    */
   private hitThisSwing = new Map<string, Set<string>>();
+
+  /**
+   * Server tick the next map weapon appears on, or 0 when nothing is scheduled
+   * — which is the case while a weapon is already on the map or being held. The
+   * timer only starts once the current weapon has been claimed, so there is
+   * never more than one gun in the arena.
+   */
+  private nextWeaponTick = 0;
+
+  /** Monotonic id handed to each projectile, so the renderer can key on it. */
+  private nextProjectileId = 1;
 
   async onCreate() {
     // A short, speakable room code instead of Colyseus's generated id, so the
@@ -220,12 +245,26 @@ export class ArenaRoom extends Room<{ state: ArenaState; input: FightInput }> {
       player.color = lobbyColorHex(id);
     });
 
+    // Test-only: force the next weapon to drop on the following tick, so the
+    // weapons suite doesn't have to sit through a 30–60s spawn timer. Stripped
+    // from production builds, exactly like the client's feel-test hook.
+    if (process.env.NODE_ENV !== "production") {
+      this.onMessage("__spawnWeapon", () => {
+        if (this.state.phase === "playing" && !this.state.weaponActive) {
+          this.nextWeaponTick = this.state.tick + 1;
+        }
+      });
+    }
+
     this.setFixedTimestep((ctx) => {
       this.state.tick++;
       this.stepPlayers(ctx.dt);
       // Hits resolve after every body has moved, so a tick sees one consistent
       // world rather than positions half-updated in map order.
       this.resolveHits();
+      // Weapons ride on top of the resolved world: pickups, the spawn timer and
+      // every projectile's flight and hit.
+      this.updateWeapons(ctx.dt);
       this.updatePhase();
     }, TICK_RATE);
 
@@ -373,15 +412,55 @@ export class ArenaRoom extends Room<{ state: ArenaState; input: FightInput }> {
     return false;
   }
 
-  /** Start a swing if the button is down and the last one has fully recovered. */
+  /** Is this fighter currently holding a weapon? */
+  private isArmed(player: Player): boolean {
+    return player.armedUntilTick > this.state.tick;
+  }
+
+  /**
+   * The attack button. Armed fighters fire a shot; everyone else throws a
+   * punch. One button, two behaviours — the weapon simply takes the press over
+   * for as long as it lasts.
+   */
   private tryAttack(sessionId: string, player: Player, pressed: boolean) {
     if (!pressed || player.frozen || player.stunned) return;
+
+    if (this.isArmed(player)) {
+      this.tryShoot(sessionId, player);
+      return;
+    }
+
     const readyAt = player.attackUntilTick + msToTicks(ATTACK_RECOVERY_MS);
     if (this.state.tick < readyAt) return;
 
     player.attackUntilTick = this.state.tick + msToTicks(ATTACK_SWING_MS);
     // A fresh swing may hit everyone again.
     this.hitThisSwing.set(sessionId, new Set());
+  }
+
+  /**
+   * Fire one projectile straight ahead — in the direction the fighter faces,
+   * which is "where they're looking" under this control scheme. Gated by the
+   * shot cooldown. The short `attackUntilTick` stamp is only there so the
+   * client plays the arm-raise and the shot cue; the punch hitbox that stamp
+   * would normally arm is suppressed for armed fighters in `resolveHits`.
+   */
+  private tryShoot(sessionId: string, player: Player) {
+    if (this.state.tick < player.shotReadyTick) return;
+    player.shotReadyTick = this.state.tick + msToTicks(SHOT_COOLDOWN_MS);
+    player.attackUntilTick = this.state.tick + msToTicks(ATTACK_SWING_MS);
+
+    const dir = player.facing >= 0 ? 1 : -1;
+    this.state.projectiles.push(
+      new Projectile({
+        id: this.nextProjectileId++,
+        ownerId: sessionId,
+        x: player.x + dir * (PLAYER_WIDTH * 0.5 + 6),
+        y: player.y - PLAYER_HEIGHT * 0.55,
+        vx: dir * SHOT_SPEED,
+        vy: 0,
+      }),
+    );
   }
 
   private advanceTimers(player: Player) {
@@ -394,6 +473,12 @@ export class ArenaRoom extends Room<{ state: ArenaState; input: FightInput }> {
     if (player.stunUntilTick !== 0 && this.state.tick >= player.stunUntilTick) {
       player.stunUntilTick = 0;
       player.stunned = false;
+    }
+    // Weapon ran out: back to fists. The next map weapon schedules itself once
+    // `updateWeapons` sees nobody armed and nothing on the ground.
+    if (player.armedUntilTick !== 0 && this.state.tick >= player.armedUntilTick) {
+      player.armedUntilTick = 0;
+      player.shotReadyTick = 0;
     }
   }
 
@@ -428,6 +513,9 @@ export class ArenaRoom extends Room<{ state: ArenaState; input: FightInput }> {
 
     for (const [attackerId, attacker] of this.state.players) {
       if (!this.isSwingActive(attacker)) continue;
+      // An armed fighter's `attackUntilTick` drives the shot animation, not a
+      // punch — the fist has no reach while a weapon is in hand.
+      if (this.isArmed(attacker)) continue;
 
       const alreadyHit = this.hitThisSwing.get(attackerId);
       const box = attackHitbox(attacker);
@@ -447,11 +535,24 @@ export class ArenaRoom extends Room<{ state: ArenaState; input: FightInput }> {
   }
 
   private applyHit(attacker: Player, target: Player) {
-    target.damage = Math.min(MAX_DAMAGE, target.damage + HIT_DAMAGE);
+    this.applyDamage(target, attacker.x, attacker.facing, HIT_DAMAGE);
+  }
 
-    // Launch away from the attacker; ties break toward where they're facing.
+  /**
+   * Take a hit from a point source: bump the damage, launch away from
+   * `sourceX`, and apply hitstun. Shared by the punch and the weapon shot —
+   * `sourceDir` only breaks the tie when the source and target share an x.
+   */
+  private applyDamage(
+    target: Player,
+    sourceX: number,
+    sourceDir: number,
+    damage: number,
+  ) {
+    target.damage = Math.min(MAX_DAMAGE, target.damage + damage);
+
     const away =
-      target.x === attacker.x ? Math.sign(attacker.facing) || 1 : target.x < attacker.x ? -1 : 1;
+      target.x === sourceX ? Math.sign(sourceDir) || 1 : target.x < sourceX ? -1 : 1;
 
     const power = KNOCKBACK_BASE + target.damage * KNOCKBACK_SCALING;
     target.vx = away * power;
@@ -477,6 +578,9 @@ export class ArenaRoom extends Room<{ state: ArenaState; input: FightInput }> {
     player.stunUntilTick = 0;
     player.vx = 0;
     player.vy = 0;
+    // Whatever they were holding is gone the moment they die.
+    player.armedUntilTick = 0;
+    player.shotReadyTick = 0;
 
     if (player.lives > 0) {
       player.deadUntilTick = this.state.tick + msToTicks(RESPAWN_DELAY_MS);
@@ -491,9 +595,182 @@ export class ArenaRoom extends Room<{ state: ArenaState; input: FightInput }> {
     player.deadUntilTick = 0;
     player.attackUntilTick = 0;
     player.stunUntilTick = 0;
+    // A weapon doesn't survive a death — you respawn with fists, and the arena's
+    // next gun is scheduled the moment `updateWeapons` sees nobody holding one.
+    player.armedUntilTick = 0;
+    player.shotReadyTick = 0;
     // Damage is per-life: you come back fresh and hard to launch again.
     player.damage = 0;
     player.invulnUntilTick = this.state.tick + msToTicks(SPAWN_IFRAME_MS);
+  }
+
+  // ---------------------------------------------------------------- weapons
+
+  /**
+   * One tick of the weapon world: move every shot in flight, resolve the
+   * pickup, and run the single-slot spawn timer. Only `playing` has weapons —
+   * any other phase wipes the lot so nothing lingers into the countdown or the
+   * round-over freeze.
+   */
+  private updateWeapons(dt: number) {
+    if (this.state.phase !== "playing") {
+      if (this.state.projectiles.length > 0) this.state.projectiles.splice(0);
+      if (this.state.weaponActive) this.state.weaponActive = false;
+      this.nextWeaponTick = 0;
+      return;
+    }
+
+    this.stepProjectiles(dt);
+    this.updateWeaponPickup();
+  }
+
+  /** True while any fighter is holding a weapon. */
+  private someoneArmed(): boolean {
+    for (const player of this.state.players.values()) {
+      if (this.isArmed(player)) return true;
+    }
+    return false;
+  }
+
+  /**
+   * The spawn timer and the walk-over pickup.
+   *
+   * The invariant: at most one weapon "in play" at a time — either lying on the
+   * map (`weaponActive`) or held by a fighter (`someoneArmed`). The timer for
+   * the next one only starts once both are false, which is what makes the drop
+   * wait for the previous weapon to actually be used.
+   */
+  private updateWeaponPickup() {
+    if (this.state.weaponActive) {
+      for (const [, player] of this.state.players) {
+        if (!this.canGrabWeapon(player)) continue;
+        const dx = player.x - this.state.weaponX;
+        const dy = player.y - PLAYER_HEIGHT * 0.5 - this.state.weaponY;
+        if (dx * dx + dy * dy > WEAPON_PICKUP_RADIUS * WEAPON_PICKUP_RADIUS) continue;
+
+        player.armedUntilTick = this.state.tick + msToTicks(WEAPON_HOLD_MS);
+        player.shotReadyTick = this.state.tick;
+        this.state.weaponActive = false;
+        this.nextWeaponTick = 0; // rescheduled once this weapon is spent
+        break;
+      }
+      return;
+    }
+
+    // A weapon is still being held — nothing to schedule yet.
+    if (this.someoneArmed()) {
+      this.nextWeaponTick = 0;
+      return;
+    }
+
+    if (this.nextWeaponTick === 0) {
+      this.nextWeaponTick = this.state.tick + this.randomWeaponDelayTicks();
+      return;
+    }
+
+    if (this.state.tick >= this.nextWeaponTick) this.spawnWeapon();
+  }
+
+  /** A random spawn gap in [WEAPON_SPAWN_MIN_MS, WEAPON_SPAWN_MAX_MS], in ticks. */
+  private randomWeaponDelayTicks(): number {
+    const ms =
+      WEAPON_SPAWN_MIN_MS + Math.random() * (WEAPON_SPAWN_MAX_MS - WEAPON_SPAWN_MIN_MS);
+    return msToTicks(ms);
+  }
+
+  /** Can this fighter pick a weapon up right now? */
+  private canGrabWeapon(player: Player): boolean {
+    return (
+      !player.spectating &&
+      !player.frozen &&
+      player.lives > 0 &&
+      player.deadUntilTick === 0 &&
+      !this.isArmed(player)
+    );
+  }
+
+  /** Drop a weapon onto a random wide-enough surface of the current map. */
+  private spawnWeapon() {
+    const surfaces = this.map.solids.filter(
+      (s) => s.width >= WEAPON_MIN_SURFACE_WIDTH,
+    );
+    const pool = surfaces.length > 0 ? surfaces : this.map.solids;
+    const surface = pool[Math.floor(Math.random() * pool.length)];
+    if (!surface) return; // a map with no solids at all — nothing to stand a gun on
+
+    const margin = 20;
+    const span = Math.max(1, surface.width - margin * 2);
+    this.state.weaponX = surface.x + margin + Math.random() * span;
+    this.state.weaponY = surface.y - WEAPON_HOVER;
+    this.state.weaponActive = true;
+    this.nextWeaponTick = 0;
+  }
+
+  /** Advance every shot, and drop the ones that leave the world, hit a wall, or connect. */
+  private stepProjectiles(dt: number) {
+    const map = this.map;
+    for (let i = this.state.projectiles.length - 1; i >= 0; i--) {
+      const shot = this.state.projectiles[i]!;
+      shot.x += shot.vx * dt;
+      shot.y += shot.vy * dt;
+
+      if (
+        this.shotOutOfBounds(shot, map.killPlaneY) ||
+        this.shotHitsSolid(shot) ||
+        this.shotHitsFighter(shot)
+      ) {
+        this.state.projectiles.splice(i, 1);
+      }
+    }
+  }
+
+  private shotOutOfBounds(shot: Projectile, killPlaneY: number): boolean {
+    return (
+      shot.x < -40 ||
+      shot.x > ARENA_WIDTH + 40 ||
+      shot.y < -40 ||
+      shot.y > killPlaneY
+    );
+  }
+
+  /** A shot stops at any real wall; it passes straight through one-way beams. */
+  private shotHitsSolid(shot: Projectile): boolean {
+    for (const solid of this.map.solids) {
+      if (solid.oneWay) continue;
+      if (
+        shot.x >= solid.x - SHOT_RADIUS &&
+        shot.x <= solid.x + solid.width + SHOT_RADIUS &&
+        shot.y >= solid.y - SHOT_RADIUS &&
+        shot.y <= solid.y + solid.height + SHOT_RADIUS
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** First hittable fighter (never the owner) whose body the shot is inside. */
+  private shotHitsFighter(shot: Projectile): boolean {
+    for (const [sessionId, target] of this.state.players) {
+      if (sessionId === shot.ownerId) continue;
+      if (!this.isHittable(target)) continue;
+
+      const box = bodyAabb(target);
+      if (
+        shot.x >= box.x - SHOT_RADIUS &&
+        shot.x <= box.x + box.width + SHOT_RADIUS &&
+        shot.y >= box.y - SHOT_RADIUS &&
+        shot.y <= box.y + box.height + SHOT_RADIUS
+      ) {
+        // Knockback follows the bullet, not "away from the impact point": a fast
+        // shot can register on a tick where it has already crossed the target's
+        // centre, and launching away from *that* would fire the victim backward.
+        const dir = Math.sign(shot.vx) || 1;
+        this.applyDamage(target, target.x - dir * 1000, dir, SHOT_DAMAGE);
+        return true;
+      }
+    }
+    return false;
   }
 
   // ----------------------------------------------------------- match phases
@@ -532,11 +809,20 @@ export class ArenaRoom extends Room<{ state: ArenaState; input: FightInput }> {
       player.invulnUntilTick = 0;
       player.attackUntilTick = 0;
       player.stunUntilTick = 0;
+      player.armedUntilTick = 0;
+      player.shotReadyTick = 0;
       player.damage = 0;
       player.ready = false; // next lobby / "play again" needs fresh readies
       respawnBody(player, player.slot, this.map.spawns);
       player.frozen = true; // held at spawn while "3 · 2 · 1" runs
     }
+
+    // Fresh round, fresh arena: no gun on the ground, none in flight, and the
+    // spawn timer restarts from zero (scheduled by `updateWeapons` on tick one
+    // of `playing`).
+    this.state.weaponActive = false;
+    this.state.projectiles.splice(0);
+    this.nextWeaponTick = 0;
 
     logger.info(`[arena] round ${this.state.round} of ${this.state.totalRounds}`);
   }

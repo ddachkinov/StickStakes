@@ -6,6 +6,7 @@ import {
   BODY_FIELDS,
   INTERPOLATION_DELAY_MS,
   PLAYER_HEIGHT,
+  PLAYER_WIDTH,
   TICK_MS,
   type ArenaState,
   type FightInput,
@@ -237,11 +238,29 @@ async function main(): Promise<void> {
     $(player).listen("attackUntilTick", (value, previous) => {
       // 0 means the swing ended; a new non-zero tick means a fresh swing.
       if (!value || value === previous) return;
+      // Armed fighters stamp this same field to drive the recoil animation —
+      // their cue is the shot report from the `shotReadyTick` listener, not a
+      // fist whoosh.
+      if (player.armedUntilTick > room.state.tick) return;
       fx.swing();
     });
 
     $(player).listen("jumping", (value, previous) => {
       if (value && !previous) fx.jump();
+    });
+
+    // A shot fired: `shotReadyTick` jumps forward by the cooldown each time.
+    $(player).listen("shotReadyTick", (value, previous) => {
+      if (previous === undefined || value <= previous) return;
+      const dir = player.facing >= 0 ? 1 : -1;
+      fx.shoot(player.x + dir * PLAYER_WIDTH * 0.7, player.y - PLAYER_HEIGHT * 0.55, dir);
+    });
+
+    // Weapon grabbed: `armedUntilTick` goes from 0 to a tick well ahead.
+    $(player).listen("armedUntilTick", (value, previous) => {
+      if (previous === undefined || value <= previous) return;
+      if (previous > room.state.tick) return; // already armed — a refresh, not a pickup
+      fx.pickup(player.x, player.y - PLAYER_HEIGHT * 0.5);
     });
 
     $(player).listen("grounded", (value, previous) => {
@@ -416,6 +435,11 @@ async function main(): Promise<void> {
     renderer.beginWorld(fx.shakeX, fx.shakeY);
     renderer.drawWorldBack(map, cam);
 
+    // The weapon pickup sits on the stage, behind the fighters.
+    if (state.weaponActive) {
+      renderer.drawWeaponPickup(state.weaponX, state.weaponY, now / 1000);
+    }
+
     const showLives = phase !== "lobby";
 
     for (const [sessionId, player] of state.players) {
@@ -435,11 +459,15 @@ async function main(): Promise<void> {
         maxLives: state.livesPerRound,
         showLives: showLives && !player.spectating,
         swing: swingProgress(player, state.tick),
+        armed: player.armedUntilTick > state.tick,
         invulnerable: player.invulnUntilTick > state.tick,
         damage: player.damage,
         stunned: player.stunned,
       });
     }
+
+    // Shots in flight ride above the fighters, like the sparks.
+    for (const shot of state.projectiles) renderer.drawProjectile(shot);
 
     // Sparks over the arena but under the fighters would be invisible behind
     // them at the moment of impact, so they go on top.

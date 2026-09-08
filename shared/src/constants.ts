@@ -104,6 +104,44 @@ export const HITSTUN_PER_DAMAGE_MS = 1.6;
 export const HITSTUN_MAX_MS = 700;
 
 /**
+ * ------------------------------------------------------------------- weapons
+ *
+ * A pickup that swaps the punch for a ranged shot. One weapon exists on the map
+ * at a time; the timer for the next one only starts once the current one has
+ * been grabbed, so the arena is never littered with guns. A picked-up weapon
+ * lasts `WEAPON_HOLD_MS` and then the fighter is back to fists.
+ *
+ * Everything here is server-authoritative — the weapon, the projectiles and the
+ * pickup all live in synced state and the client only ever draws them, exactly
+ * like a hazard. None of it reaches `stepBody`, so prediction is unaffected.
+ */
+
+/** The random gap between one weapon being taken and the next one appearing. */
+export const WEAPON_SPAWN_MIN_MS = 30_000;
+export const WEAPON_SPAWN_MAX_MS = 60_000;
+/** How long a fighter keeps a weapon after picking it up. */
+export const WEAPON_HOLD_MS = 20_000;
+/** Centre-to-centre distance at which a fighter walking over a weapon grabs it. */
+export const WEAPON_PICKUP_RADIUS = 30;
+/** Only spawn a weapon on a solid at least this wide, so it never lands on a sliver. */
+export const WEAPON_MIN_SURFACE_WIDTH = 60;
+/** How far above the surface the pickup floats (it also bobs a little). */
+export const WEAPON_HOVER = 16;
+
+/**
+ * The shot. Travels flat in the direction the fighter faces — "where you're
+ * looking", with this control scheme — and deals a punch's worth of damage on
+ * contact. Fast enough to feel hitscan across the 960-wide arena but still a
+ * real travelling object you can watch and, in theory, walk out of.
+ */
+export const SHOT_SPEED = 720;
+export const SHOT_DAMAGE = HIT_DAMAGE;
+/** Minimum gap between shots while a weapon is held. */
+export const SHOT_COOLDOWN_MS = 300;
+/** Visual/collision half-size of a projectile, in arena units. */
+export const SHOT_RADIUS = 3;
+
+/**
  * All match timing is expressed in server ticks rather than wall-clock, so the
  * client can render every countdown from the synced `tick` field alone — no
  * clock alignment, no per-tick timer messages.
