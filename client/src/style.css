@@ -464,34 +464,14 @@ body {
   height: 100%;
 }
 
-#lobby-preview,
 .landing-hero {
   display: flex;
   flex-direction: column;
   gap: var(--gap-2);
 }
 
-.hero-meta {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-}
+/* ================================================================== result */
 
-.hero-name {
-  font-size: 15px;
-  font-weight: 800;
-  letter-spacing: -0.01em;
-}
-
-.hero-tag {
-  font-size: 11px;
-  color: var(--dim);
-}
-
-/* =========================================================== lobby / result */
-
-#lobby,
 #result {
   position: fixed;
   z-index: 4;
@@ -511,51 +491,20 @@ body {
 }
 
 @supports (backdrop-filter: blur(6px)) {
-  #lobby,
   #result {
     backdrop-filter: blur(18px) saturate(1.1);
   }
 }
 
-#lobby[hidden],
 #result[hidden] {
   display: none;
 }
 
-#lobby button,
-#lobby input,
-#lobby canvas,
-#lobby .strip,
 #result button,
 #result input {
   pointer-events: auto;
 }
 
-/* ---- lobby shell: preview pane + a controls column that owns its own
-   scroll and the pinned ready / start button. Portrait stacks the two;
-   the wide layout below turns them into side-by-side columns. ---- */
-
-#lobby-preview {
-  flex: none;
-  padding: var(--gap-4) var(--gap-4) 0;
-}
-
-/* Portrait: the preview stays pinned above the scrolling controls, so keep
-   the showcase compact enough to leave the setup room to breathe. The wide
-   layout below overrides this to fill the column. */
-#lobby-preview .hero-stage {
-  max-height: 132px;
-}
-
-#lobby-main {
-  flex: 1 1 auto;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-#lobby-scroll,
 #result-scroll {
   flex: 1 1 auto;
   min-height: 0;
@@ -565,87 +514,18 @@ body {
   display: flex;
   flex-direction: column;
   gap: var(--gap-3);
-  padding: var(--gap-3) var(--gap-4);
-}
-
-#result-scroll {
   padding: var(--gap-4) var(--gap-4) var(--gap-3);
 }
 
-/* Grid/flex children must be allowed to shrink below their content, or a
-   non-wrapping strip (the wardrobe rows) blows a column out. */
-#lobby-scroll > *,
-#lobby-preview > *,
 #result-scroll > * {
   min-width: 0;
 }
 
-#lobby-foot,
 .result-actions {
   flex: none;
 }
 
-#lobby-foot {
-  display: flex;
-  flex-direction: column;
-  gap: var(--gap-2);
-  padding: var(--gap-3) var(--gap-4) calc(var(--gap-3) + var(--safe-b));
-  border-top: 1px solid var(--stroke);
-  background: rgba(13, 16, 22, 0.5);
-}
-
-/* ---- room code ---- */
-
-#lobby-code {
-  display: flex;
-  align-items: center;
-  gap: var(--gap-2);
-  padding: var(--gap-2) 12px;
-  border-radius: var(--r-2);
-  background: rgba(0, 0, 0, 0.26);
-  border: 1px solid var(--stroke);
-}
-
-.lobby-code-main {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-#lobby-code-value {
-  font: 800 30px/1 ui-monospace, "SFMono-Regular", Consolas, monospace;
-  letter-spacing: 0.22em;
-  text-indent: 0.22em;
-  color: var(--ink);
-}
-
-#lobby-share {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  border: 0;
-  border-radius: var(--r-1);
-  padding: 9px 14px;
-  background: var(--surface-2);
-  border: 1px solid var(--stroke-2);
-  color: var(--ink);
-  font: 700 12px/1 inherit;
-}
-
-#lobby-share:active {
-  transform: translateY(1px);
-}
-
-/* ---- match setup ---- */
-
-#lobby-setup {
-  display: flex;
-  flex-direction: column;
-  gap: var(--gap-3);
-}
+/* ---- match-rules controls, reused inside the lobby settings sheet ---- */
 
 .setup-field {
   display: flex;
@@ -772,67 +652,6 @@ body {
   border-color: var(--stroke);
   background: var(--surface);
   color: var(--dim);
-}
-
-/* ---- foot CTAs ---- */
-
-.lobby-cta {
-  width: 100%;
-  border: 0;
-  border-radius: var(--r-2);
-  padding: 14px 20px;
-  background: var(--accent);
-  color: var(--accent-ink);
-  font: 800 14px/1 inherit;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  box-shadow: 0 10px 22px -8px rgba(255, 90, 95, 0.55);
-  transition: background 120ms ease, box-shadow 120ms ease, opacity 120ms ease;
-}
-
-.lobby-cta:active {
-  transform: translateY(1px);
-}
-
-.lobby-cta:disabled {
-  opacity: 0.5;
-  box-shadow: none;
-}
-
-/* Ready, once you are: recede to a quiet confirmed state. */
-#lobby-ready.is-on {
-  background: transparent;
-  color: var(--good);
-  border: 1px solid var(--good);
-  box-shadow: none;
-}
-
-/* The host's go button, when it is live: gold, unmissable. */
-#lobby-start.is-start {
-  background: var(--gold);
-  color: #0e1116;
-  box-shadow: 0 10px 22px -8px rgba(255, 209, 102, 0.55);
-}
-
-#lobby-foot-meta {
-  margin: 0;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 4px 8px;
-  font-size: 11px;
-  color: var(--dim);
-}
-
-#lobby-ready-count {
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--ink);
-}
-
-#lobby-ready-count:empty {
-  display: none;
 }
 
 /* ================================================================ wardrobe */
@@ -1288,51 +1107,6 @@ button:disabled {
 
 /* ============================================================= adaptive tweaks */
 
-/* Wide lobby: the fighter showcase becomes a full-height pane on the left,
-   the room code + match setup a scrolling column on the right, and the
-   ready / start button sits pinned right under those controls. Kicks in as
-   soon as there's room for two columns — landscape phones and up. */
-@media (min-width: 720px) {
-  #lobby {
-    width: min(900px, calc(100vw - 24px));
-    flex-direction: row;
-    align-items: stretch;
-  }
-
-  #lobby-preview {
-    flex: 0 0 clamp(220px, 30%, 292px);
-    padding: var(--gap-4);
-    border-right: 1px solid var(--stroke);
-    background: rgba(0, 0, 0, 0.22);
-    overflow-y: auto;
-    overscroll-behavior: contain;
-  }
-
-  /* Let the showcase fill the column instead of the portrait 16/9 letterbox. */
-  #lobby-preview .hero-stage {
-    flex: 1 1 auto;
-    aspect-ratio: auto;
-    max-height: none;
-    min-height: 180px;
-  }
-
-  #lobby-preview .hero-meta {
-    flex-direction: column;
-    align-items: center;
-    text-align: center;
-    gap: 2px;
-  }
-
-  #lobby-main {
-    flex: 1 1 auto;
-    min-width: 0;
-  }
-
-  #lobby-scroll {
-    padding: var(--gap-4) var(--gap-4) var(--gap-3);
-  }
-}
-
 /* Landscape phone: the result card also splits into two columns so nothing
    needs a long scroll. (The lobby handles this on its own, above.) */
 @media (min-width: 620px) and (max-height: 560px) {
@@ -1399,5 +1173,841 @@ button:disabled {
     flex-wrap: wrap;
     max-width: min(64vw, 420px);
     column-gap: 6px;
+  }
+}
+
+/* =============================================================== lobby (v2) */
+
+/*
+ * A pre-match waiting room. A translucent scrim over the live arena — never a
+ * full opaque page — laid out as header / floor / action bar / roster. The
+ * three visual layers of the spec map to: the arena canvas showing through
+ * (world), the podiums + nameplates (identity), and this chrome (UI).
+ */
+
+#lobby {
+  position: fixed;
+  inset: 0;
+  z-index: 4;
+  display: grid;
+  grid-template:
+    "head" auto
+    "arena" 1fr
+    "actions" auto
+    "roster" auto
+    / 1fr;
+  gap: 0;
+  color: var(--ink);
+  background: linear-gradient(180deg, rgba(10, 13, 18, 0.8), rgba(10, 13, 18, 0.93));
+  padding-bottom: var(--safe-b);
+  overscroll-behavior: contain;
+}
+
+#lobby[hidden] {
+  display: none;
+}
+
+@supports (backdrop-filter: blur(6px)) {
+  #lobby {
+    background: linear-gradient(180deg, rgba(10, 13, 18, 0.62), rgba(10, 13, 18, 0.82));
+    backdrop-filter: blur(14px) saturate(1.05);
+  }
+}
+
+/* While the lobby scrim is up: its own roster panel and settings sheet are the
+   source of truth, so hide the in-fight roster and the floating game buttons
+   (they'd collide with the header and duplicate the settings). */
+body:has(#lobby:not([hidden])) :is(#roster, #mute, #fullscreen) {
+  display: none;
+}
+
+/* ---- header ---- */
+
+.lobby-header {
+  grid-area: head;
+  display: flex;
+  align-items: center;
+  gap: var(--gap-3);
+  padding: max(var(--gap-3), var(--safe-t)) var(--safe-r) var(--gap-3) var(--safe-l);
+  border-bottom: 1px solid var(--stroke);
+}
+
+.lobby-brand {
+  font-size: clamp(18px, 4.5vw, 26px);
+  font-weight: 900;
+  letter-spacing: 0.02em;
+  line-height: 1;
+}
+
+.lobby-brand span {
+  color: var(--accent);
+}
+
+.lobby-room {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--stroke-2);
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.lobby-room .label {
+  font-size: 9px;
+}
+
+.lobby-room strong {
+  font: 800 16px/1 ui-monospace, "SFMono-Regular", Consolas, monospace;
+  letter-spacing: 0.14em;
+}
+
+.lobby-room-share {
+  opacity: 0.6;
+}
+
+.lobby-room:active {
+  transform: translateY(1px);
+}
+
+.lobby-gear {
+  width: 38px;
+  height: 38px;
+  flex: none;
+  border-radius: 12px;
+  border: 1px solid var(--stroke-2);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 17px;
+  line-height: 1;
+  transition: transform 160ms ease, background 160ms ease;
+}
+
+.lobby-gear:hover {
+  background: var(--surface-2);
+}
+
+.lobby-gear:active {
+  transform: rotate(35deg);
+}
+
+/* ---- the floor ---- */
+
+.lobby-arena {
+  grid-area: arena;
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.lobby-floor {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: center;
+  gap: clamp(10px, 3vw, 34px);
+  width: 100%;
+  max-width: 900px;
+  padding: var(--gap-4) var(--gap-4) calc(var(--gap-4) + 18px);
+}
+
+/* A ground line the whole room stands on. */
+.lobby-floor::after {
+  content: "";
+  position: absolute;
+  left: 6%;
+  right: 6%;
+  bottom: calc(var(--gap-4) + 6px);
+  height: 2px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.28), transparent);
+}
+
+.lobby-podium {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  width: clamp(74px, 20vw, 104px);
+  animation: podium-in 320ms cubic-bezier(0.2, 1, 0.4, 1);
+}
+
+/* Transform-only entrance: if the animation timeline is ever stalled the podium
+   is still fully opaque, just momentarily offset. */
+@keyframes podium-in {
+  from { transform: translateY(14px) scale(0.92); }
+  to { transform: translateY(0) scale(1); }
+}
+
+.lobby-podium-stage {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 3 / 4;
+}
+
+.lobby-podium-fig {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* Contact disc under each fighter, tinted to their colour. */
+.lobby-podium-stage::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -2px;
+  width: 62%;
+  height: 9px;
+  transform: translateX(-50%);
+  border-radius: 50%;
+  background: radial-gradient(
+    ellipse at center,
+    color-mix(in srgb, var(--pc, #fff) 55%, transparent),
+    transparent 70%
+  );
+  opacity: 0.5;
+}
+
+.lobby-podium-plate {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--panel-strong);
+  border: 1px solid var(--stroke);
+  border-left: 2px solid color-mix(in srgb, var(--pc, #fff) 75%, transparent);
+}
+
+.lobby-podium-name {
+  font-size: 11px;
+  font-weight: 700;
+  max-width: 8ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lobby-podium-tag {
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  padding: 1px 4px;
+  border-radius: 4px;
+}
+
+.lobby-podium-tag.is-you {
+  background: var(--accent);
+  color: #fff;
+}
+
+.lobby-podium-tag.is-host {
+  background: var(--gold);
+  color: #0e1116;
+}
+
+.lobby-podium-ready {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--faint);
+  transition: color 160ms ease;
+}
+
+.lobby-podium-ready.is-on {
+  color: var(--good);
+}
+
+/* Me: a touch bigger, lit from below, ringed. Still one of the crowd. */
+.lobby-podium.is-self {
+  width: clamp(88px, 24vw, 128px);
+}
+
+.lobby-podium.is-self .lobby-podium-stage::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -6px;
+  width: 92%;
+  height: 22px;
+  transform: translateX(-50%);
+  border-radius: 50%;
+  background: radial-gradient(
+    ellipse at center,
+    color-mix(in srgb, var(--pc, #fff) 42%, transparent),
+    transparent 72%
+  );
+  filter: blur(2px);
+}
+
+.lobby-podium.is-self .lobby-podium-plate {
+  background: color-mix(in srgb, var(--pc, #fff) 18%, var(--panel-strong));
+  border-color: color-mix(in srgb, var(--pc, #fff) 55%, var(--stroke));
+}
+
+.lobby-podium.is-ready .lobby-podium-fig {
+  filter: drop-shadow(0 0 6px color-mix(in srgb, var(--good) 70%, transparent));
+}
+
+.lobby-count-banner {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  margin: 0;
+  padding: 8px 18px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  background: var(--panel-strong);
+  border: 1px solid var(--stroke-2);
+  white-space: nowrap;
+}
+
+.lobby-count-banner[hidden] {
+  display: none;
+}
+
+.lobby-count-banner.is-hot {
+  color: #0e1116;
+  background: var(--good);
+  border-color: var(--good);
+  animation: banner-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes banner-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--good) 55%, transparent); }
+  50% { box-shadow: 0 0 0 10px transparent; }
+}
+
+/* ---- action bar ---- */
+
+.lobby-actionbar {
+  grid-area: actions;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--gap-2);
+  padding: var(--gap-3) var(--gap-4);
+  border-top: 1px solid var(--stroke);
+  background: rgba(13, 16, 22, 0.55);
+}
+
+.lobby-act {
+  border: 0;
+  border-radius: var(--r-2);
+  padding: 14px 20px;
+  font: 800 13px/1 inherit;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  transition: transform 120ms ease, box-shadow 120ms ease, background 120ms ease;
+}
+
+.lobby-act:active {
+  transform: translateY(1px);
+}
+
+.lobby-act-wardrobe {
+  background: var(--surface-2);
+  border: 1px solid var(--stroke-2);
+  color: var(--ink);
+}
+
+.lobby-act-wardrobe:hover {
+  background: var(--surface);
+}
+
+.lobby-status {
+  flex: 1 1 120px;
+  margin: 0;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
+.lobby-act-ready {
+  background: var(--accent);
+  color: var(--accent-ink);
+  box-shadow: 0 10px 22px -8px rgba(255, 90, 95, 0.55);
+  min-width: 150px;
+}
+
+.lobby-act-ready.is-on {
+  background: transparent;
+  color: var(--good);
+  border: 1px solid var(--good);
+  box-shadow: none;
+}
+
+.lobby-act-start {
+  background: var(--gold);
+  color: #0e1116;
+  box-shadow: 0 10px 22px -8px rgba(255, 209, 102, 0.55);
+  min-width: 150px;
+}
+
+.lobby-act-start[hidden] {
+  display: none;
+}
+
+/* ---- roster panel ---- */
+
+.lobby-roster-panel {
+  grid-area: roster;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: var(--gap-3) var(--gap-4);
+  border-top: 1px solid var(--stroke);
+  background: rgba(13, 16, 22, 0.55);
+  max-height: 30vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.lobby-roster-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.lobby-roster-count {
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.05em;
+}
+
+.lobby-roster-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.lobby-roster-item {
+  --pc: var(--ink);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: var(--surface);
+  border-left: 2px solid color-mix(in srgb, var(--pc) 75%, transparent);
+  font-size: 12px;
+}
+
+.lobby-roster-item.is-self {
+  background: color-mix(in srgb, var(--pc) 12%, var(--surface));
+}
+
+.lobby-roster-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--pc);
+  box-shadow: 0 0 7px color-mix(in srgb, var(--pc) 65%, transparent);
+}
+
+.lobby-roster-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.lobby-roster-color {
+  font-size: 10px;
+  color: var(--dim);
+  letter-spacing: 0.04em;
+}
+
+.lobby-roster-ready {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: var(--faint);
+}
+
+.lobby-roster-ready.is-on {
+  color: var(--good);
+}
+
+/* ---- toasts ---- */
+
+.lobby-toasts {
+  position: fixed;
+  top: max(12px, var(--safe-t));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  pointer-events: none;
+}
+
+.lobby-toast {
+  padding: 8px 14px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  background: var(--panel-strong);
+  border: 1px solid var(--stroke-2);
+  box-shadow: var(--shadow);
+  opacity: 0;
+  transform: translateY(-8px);
+  transition: opacity 220ms ease, transform 220ms ease;
+}
+
+.lobby-toast.is-in {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.lobby-toast.is-good {
+  border-color: color-mix(in srgb, var(--good) 55%, var(--stroke-2));
+  color: var(--good);
+}
+
+.lobby-toast.is-warn {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--stroke-2));
+  color: #ff9a9d;
+}
+
+/* ---- modals ---- */
+
+.lobby-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 7;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--gap-4);
+  background: rgba(4, 6, 10, 0.66);
+}
+
+.lobby-modal[hidden] {
+  display: none;
+}
+
+.lobby-modal-card {
+  width: min(460px, 100%);
+  max-height: calc(100dvh - 2 * var(--gap-4));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-radius: var(--r-3);
+  border: 1px solid var(--stroke-2);
+  background: linear-gradient(180deg, rgba(28, 35, 51, 0.98), rgba(13, 16, 22, 0.98));
+  box-shadow: var(--shadow);
+  padding: var(--gap-4);
+  transform: translateY(8px) scale(0.985);
+  opacity: 0.9;
+  transition: transform 180ms cubic-bezier(0.2, 1, 0.4, 1), opacity 180ms ease;
+}
+
+.lobby-modal.is-open .lobby-modal-card {
+  transform: translateY(0) scale(1);
+  opacity: 1;
+}
+
+.lobby-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--gap-3);
+}
+
+.lobby-modal-head h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 900;
+  letter-spacing: 0.02em;
+}
+
+.lobby-modal-x {
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  border: 1px solid var(--stroke-2);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.lobby-wardrobe-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-3);
+}
+
+.lobby-wardrobe-preview {
+  aspect-ratio: 16 / 10;
+  max-height: 200px;
+}
+
+.lobby-wardrobe-cats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.wardrobe-cat {
+  padding: 7px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--stroke-2);
+  background: transparent;
+  color: var(--dim);
+  font: 700 11px/1 inherit;
+  letter-spacing: 0.04em;
+}
+
+.wardrobe-cat.is-on {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: #0e1116;
+}
+
+.wardrobe-cat:disabled {
+  opacity: 0.35;
+}
+
+.wardrobe-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-2);
+}
+
+.lobby-color-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+  gap: 8px;
+}
+
+.lobby-color {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 6px 8px;
+  border-radius: var(--r-2);
+  border: 1px solid var(--stroke-2);
+  background: var(--surface);
+  color: var(--ink);
+  transition: transform 120ms ease, border-color 120ms ease, background 120ms ease;
+}
+
+.lobby-color:not(:disabled):hover {
+  background: var(--surface-2);
+  transform: translateY(-1px);
+}
+
+.lobby-color:not(:disabled):active {
+  transform: translateY(0);
+}
+
+.lobby-color-disc {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--swatch);
+  border: 2px solid rgba(255, 255, 255, 0.25);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--swatch) 55%, transparent);
+}
+
+.lobby-color-name {
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.lobby-color-holder {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--dim);
+  min-height: 11px;
+}
+
+.lobby-color.is-mine {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface));
+}
+
+.lobby-color.is-mine .lobby-color-holder {
+  color: var(--accent);
+}
+
+.lobby-color.is-mine::after {
+  content: "✓";
+  position: absolute;
+  top: 5px;
+  right: 7px;
+  font-size: 11px;
+  font-weight: 900;
+  color: var(--accent);
+}
+
+.lobby-color.is-taken {
+  opacity: 0.45;
+  cursor: not-allowed;
+  filter: grayscale(0.4);
+}
+
+.lobby-color.is-rejected {
+  animation: color-shake 360ms ease;
+  border-color: var(--accent);
+}
+
+@keyframes color-shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-4px); }
+  40% { transform: translateX(4px); }
+  60% { transform: translateX(-3px); }
+  80% { transform: translateX(3px); }
+}
+
+/* ---- settings ---- */
+
+.lobby-settings-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-3);
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-radius: var(--r-1);
+  background: var(--surface);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.settings-toggle {
+  min-width: 56px;
+  padding: 7px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--stroke-2);
+  background: transparent;
+  color: var(--ink);
+  font: 700 12px/1 inherit;
+}
+
+.settings-toggle[aria-pressed="true"] {
+  background: var(--good);
+  border-color: var(--good);
+  color: #0e1116;
+}
+
+.settings-rules {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-3);
+  padding: var(--gap-3);
+  border-radius: var(--r-2);
+  border: 1px solid var(--stroke);
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.settings-leave {
+  margin-top: 4px;
+  padding: 12px;
+  border-radius: var(--r-1);
+  border: 1px solid color-mix(in srgb, var(--accent) 50%, var(--stroke-2));
+  background: transparent;
+  color: #ff9a9d;
+  font: 800 13px/1 inherit;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.lobby-confirm-card {
+  text-align: center;
+}
+
+.lobby-confirm-card h2 {
+  margin: 0 0 6px;
+  font-size: 18px;
+  font-weight: 900;
+}
+
+.lobby-confirm-card p {
+  margin: 0 0 var(--gap-3);
+  font-size: 13px;
+  color: var(--dim);
+}
+
+.lobby-confirm-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.lobby-confirm-actions button {
+  flex: 1;
+  padding: 12px;
+  border-radius: var(--r-1);
+  border: 1px solid var(--stroke-2);
+  background: var(--surface);
+  color: var(--ink);
+  font: 700 13px/1 inherit;
+}
+
+.lobby-confirm-actions .is-danger {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+/* ---- wide layout: roster becomes a right rail ---- */
+
+@media (min-width: 860px) {
+  #lobby {
+    grid-template:
+      "head head" auto
+      "arena roster" 1fr
+      "actions roster" auto
+      / 1fr clamp(260px, 26vw, 320px);
+  }
+
+  .lobby-roster-panel {
+    border-top: 0;
+    border-left: 1px solid var(--stroke);
+    max-height: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #lobby,
+  .lobby-podium,
+  .lobby-toast,
+  .lobby-modal,
+  .lobby-modal-card,
+  .lobby-count-banner.is-hot,
+  .lobby-color.is-rejected {
+    animation: none !important;
+    transition: none !important;
   }
 }

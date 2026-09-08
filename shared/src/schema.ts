@@ -39,6 +39,13 @@ export const Player = schema(
      * only — never read by the physics step.
      */
     color: t.string().default("#ffffff"),
+    /**
+     * Lobby identity colour — one of `LOBBY_COLORS` ids, or "" for a legacy /
+     * off-palette look. The server keeps this unique across the room: no two
+     * players ever hold the same id at once. `color` above is kept in step with
+     * it whenever it changes from the lobby.
+     */
+    colorId: t.string().default(""),
     /** Wardrobe hat id — one of `HATS`. Cosmetic only; the client draws it. */
     hat: t.string().default(DEFAULT_HAT),
     /** Join order, also the spawn point index. */

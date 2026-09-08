@@ -93,7 +93,7 @@ const renderer = createRenderer(canvas);
 const input = createInput(canvas);
 const hud = createHud();
 const landing = createLanding();
-const lobby = createLobbyPanel();
+const lobby = createLobbyPanel(document, { audio });
 const result = createResultPanel();
 
 function relayout(): void {
@@ -145,7 +145,7 @@ async function connect(): Promise<ArenaRoom> {
   for (;;) {
     const choice = await landing.choose();
     try {
-      const wardrobe = { color: choice.color, hat: choice.hat };
+      const wardrobe = { color: choice.color, hat: choice.hat, colorId: choice.colorId };
       const room = choice.code
         ? await joinArenaByCode(choice.code, choice.name, wardrobe)
         : await createArena(choice.name, wardrobe);
@@ -292,7 +292,17 @@ async function main(): Promise<void> {
   result.onPlayAgain(() => room.send("startMatch"));
   lobby.onConfigure((change) => room.send("configure", change));
   lobby.onCustomize((change) => room.send("customize", change));
+  lobby.onSetColor((colorId) => room.send("setColor", { colorId }));
   lobby.onReady((ready) => room.send("ready", { ready }));
+  lobby.onLeave(() => {
+    void room.leave();
+    // Back to a clean start screen, and drop the room code so a reload doesn't
+    // rejoin the game we just walked out of.
+    location.href = location.pathname;
+  });
+  room.onMessage("colorRejected", (message: { colorId: string }) => {
+    lobby.notifyColorRejected(message.colorId);
+  });
 
   function flash(message: string): void {
     if (!message) return;

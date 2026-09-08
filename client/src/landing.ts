@@ -20,9 +20,12 @@ export interface LandingResult {
   /** Wardrobe pick, carried into the join options. */
   color: string;
   hat: string;
+  /** Remembered lobby palette id, so the server can hand back the same colour. */
+  colorId: string;
 }
 
 const NAME_KEY = "stickstakes:name";
+const COLOR_ID_KEY = "stickstakes:colorId";
 
 /** Strip anything that isn't in the code alphabet, and upper-case the rest. */
 export function normalizeCode(raw: string): string {
@@ -80,6 +83,14 @@ export function createLanding(root: ParentNode = document): Landing {
 
   let settle: ((result: LandingResult) => void) | undefined;
 
+  function rememberedColorId(): string {
+    try {
+      return localStorage.getItem(COLOR_ID_KEY) ?? "";
+    } catch {
+      return "";
+    }
+  }
+
   function playerName(): string {
     const typed = nameEl.value.trim().slice(0, MAX_NAME_LENGTH);
     const name = typed || `P${Math.floor(Math.random() * 90 + 10)}`;
@@ -97,7 +108,7 @@ export function createLanding(root: ParentNode = document): Landing {
     errorEl.textContent = "";
     busy(true);
     const { color, hat } = wardrobe.value();
-    settle?.({ name: playerName(), code: "", color, hat });
+    settle?.({ name: playerName(), code: "", color, hat, colorId: rememberedColorId() });
   });
 
   form.addEventListener("submit", (event) => {
@@ -111,7 +122,7 @@ export function createLanding(root: ParentNode = document): Landing {
     errorEl.textContent = "";
     busy(true);
     const { color, hat } = wardrobe.value();
-    settle?.({ name: playerName(), code, color, hat });
+    settle?.({ name: playerName(), code, color, hat, colorId: rememberedColorId() });
   });
 
   return {

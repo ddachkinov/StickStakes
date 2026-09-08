@@ -42,7 +42,11 @@ import {
   getMap,
   isHatId,
   isHexColor,
+  isLobbyColorId,
   isMapId,
+  LOBBY_COLORS,
+  lobbyColorHex,
+  lobbyColorIdFromHex,
   msToTicks,
   overlapsRect,
   roundWinsToTakeMatch,
@@ -192,6 +196,30 @@ export class ArenaRoom extends Room<{ state: ArenaState; input: FightInput }> {
       if (isHatId(message?.hat)) player.hat = message.hat;
     });
 
+    /**
+     * Lobby identity colour. One colour belongs to one player: a request for a
+     * colour someone else already holds is rejected outright (the client is
+     * told, so it can flash "taken"). The room is single-threaded, so two
+     * near-simultaneous requests for the same colour resolve in arrival order —
+     * the first wins, the second bounces. Only settable while waiting.
+     */
+    this.onMessage("setColor", (client, message: { colorId?: string }) => {
+      if (this.state.phase !== "lobby" && this.state.phase !== "matchOver") return;
+      const player = this.state.players.get(client.sessionId);
+      if (!player) return;
+
+      const id = message?.colorId;
+      if (!isLobbyColorId(id) || id === player.colorId) return;
+
+      if (this.colorHolder(id, client.sessionId)) {
+        client.send("colorRejected", { colorId: id });
+        return;
+      }
+
+      player.colorId = id;
+      player.color = lobbyColorHex(id);
+    });
+
     this.setFixedTimestep((ctx) => {
       this.state.tick++;
       this.stepPlayers(ctx.dt);
@@ -232,18 +260,34 @@ export class ArenaRoom extends Room<{ state: ArenaState; input: FightInput }> {
     return getMap(this.state.mapId);
   }
 
-  onJoin(client: Client, options?: { name?: string; color?: string; hat?: string }) {
+  onJoin(
+    client: Client,
+    options?: { name?: string; color?: string; colorId?: string; hat?: string },
+  ) {
     const slot = this.nextSlot++ % SPAWN_POINTS.length;
     // A match already in progress: sit this round out, join at the next one.
     const midMatch = this.state.phase !== "lobby";
 
+    // Lobby identity colour: honour the player's remembered pick when it's a
+    // real palette id and nobody else holds it, otherwise hand out the first
+    // free colour. Falls back to "" only if all twelve are somehow taken.
+    const wanted =
+      (isLobbyColorId(options?.colorId) ? options!.colorId! : "") ||
+      lobbyColorIdFromHex(options?.color);
+    const colorId =
+      wanted && !this.colorHolder(wanted) ? wanted : this.firstFreeColorId();
+
     const player = new Player({
       ...spawnBody(slot, this.map.spawns),
       name: (options?.name ?? "").trim().slice(0, MAX_NAME_LENGTH) || `P${slot + 1}`,
-      // Their wardrobe pick if it's valid, otherwise the join-order colour.
-      color: isHexColor(options?.color)
-        ? options.color.toLowerCase()
-        : PLAYER_COLORS[slot % PLAYER_COLORS.length]!,
+      colorId,
+      // The palette hex for the assigned identity; a raw wardrobe hex only wins
+      // when there was no free palette colour at all.
+      color: colorId
+        ? lobbyColorHex(colorId)
+        : isHexColor(options?.color)
+          ? options!.color!.toLowerCase()
+          : PLAYER_COLORS[slot % PLAYER_COLORS.length]!,
       hat: isHatId(options?.hat) ? options.hat : DEFAULT_HAT,
       slot,
       // Spread first so these two win: `spawnBody` carries `frozen: false`.
@@ -567,6 +611,27 @@ export class ArenaRoom extends Room<{ state: ArenaState; input: FightInput }> {
   /** Everyone taking part in the current round, as [sessionId, player]. */
   private fighters(): [string, Player][] {
     return Array.from(this.state.players.entries()).filter(([, p]) => !p.spectating);
+  }
+
+  /**
+   * Session id of the player currently holding `colorId`, or undefined if it's
+   * free. `exceptSessionId` lets a player "hold" their own colour without it
+   * reading as taken.
+   */
+  private colorHolder(colorId: string, exceptSessionId?: string): string | undefined {
+    for (const [sessionId, player] of this.state.players) {
+      if (sessionId === exceptSessionId) continue;
+      if (player.colorId === colorId) return sessionId;
+    }
+    return undefined;
+  }
+
+  /** The first palette colour nobody in the room holds, or "" if all are taken. */
+  private firstFreeColorId(): string {
+    for (const color of LOBBY_COLORS) {
+      if (!this.colorHolder(color.id)) return color.id;
+    }
+    return "";
   }
 
   /** True once every player in the room has readied up (and there is one). */

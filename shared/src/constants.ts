@@ -232,6 +232,75 @@ export const WARDROBE_COLORS: readonly string[] = [
   "#4a4e69", // ink
 ];
 
+/**
+ * ---------------------------------------------------------------- lobby colours
+ *
+ * The pre-match identity palette, one entry per pickable colour. Unlike the
+ * freeform wardrobe swatches above, THIS list is the authoritative set the
+ * lobby hands out: one colour belongs to exactly one player at a time
+ * (Among Us style). The server owns availability — it is always derived from
+ * the players actually in the room, never a separate list that can drift.
+ *
+ * Twelve colours for a ten-player room, so there is always slack. Every hex is
+ * chosen to read clearly against the dark arena and to stay distinct from its
+ * neighbours in a ten-stick scrum.
+ */
+export interface LobbyColor {
+  /** Stable id put on the wire (`player.colorId`). */
+  id: string;
+  /** Human name, shown in the picker and in "X is now Blue" toasts. */
+  name: string;
+  /** The `#rrggbb` the stickman is actually drawn in. */
+  hex: string;
+}
+
+export const LOBBY_COLORS: readonly LobbyColor[] = [
+  { id: "red", name: "Red", hex: "#ff5a5f" },
+  { id: "orange", name: "Orange", hex: "#ff9f45" },
+  { id: "yellow", name: "Yellow", hex: "#ffd166" },
+  { id: "lime", name: "Lime", hex: "#a3e635" },
+  { id: "green", name: "Green", hex: "#4ade80" },
+  { id: "cyan", name: "Cyan", hex: "#4cc9f0" },
+  { id: "blue", name: "Blue", hex: "#5b8cff" },
+  { id: "purple", name: "Purple", hex: "#c792ea" },
+  { id: "pink", name: "Pink", hex: "#f78fb3" },
+  { id: "brown", name: "Brown", hex: "#c08457" },
+  { id: "white", name: "White", hex: "#f4f4f5" },
+  { id: "slate", name: "Slate", hex: "#7c8695" },
+];
+
+const LOBBY_COLOR_BY_ID: ReadonlyMap<string, LobbyColor> = new Map(
+  LOBBY_COLORS.map((c) => [c.id, c]),
+);
+
+const LOBBY_COLOR_BY_HEX: ReadonlyMap<string, LobbyColor> = new Map(
+  LOBBY_COLORS.map((c) => [c.hex, c]),
+);
+
+/** Is this one of the lobby palette ids? */
+export function isLobbyColorId(value: unknown): value is string {
+  return typeof value === "string" && LOBBY_COLOR_BY_ID.has(value);
+}
+
+/** The hex a lobby colour id draws as, or the first palette hex as a fallback. */
+export function lobbyColorHex(id: string): string {
+  return LOBBY_COLOR_BY_ID.get(id)?.hex ?? LOBBY_COLORS[0]!.hex;
+}
+
+/** The display name for a lobby colour id, or "" if it isn't one. */
+export function lobbyColorName(id: string): string {
+  return LOBBY_COLOR_BY_ID.get(id)?.name ?? "";
+}
+
+/**
+ * Best-effort id for a `#rrggbb`: an exact palette match, else "". Used to turn
+ * a remembered wardrobe hex (or a join option) into a palette identity.
+ */
+export function lobbyColorIdFromHex(value: unknown): string {
+  if (typeof value !== "string") return "";
+  return LOBBY_COLOR_BY_HEX.get(value.toLowerCase())?.id ?? "";
+}
+
 /** A six-digit `#rrggbb`. The wardrobe's custom picker only ever emits this. */
 const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
 

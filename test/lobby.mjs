@@ -11,6 +11,7 @@
 import { Client } from "@colyseus/sdk";
 import {
   DEFAULT_STAKE,
+  lobbyColorHex,
   MAX_PLAYERS,
   MAX_STAKE_LENGTH,
   ROOM_CODE_ALPHABET,
@@ -126,32 +127,66 @@ console.log("\n=== wardrobe ===");
 const wHost = track(await client.create(ROOM_NAME, { name: "PLAIN" }));
 await sleep(200);
 const dressed = track(
-  await client.joinById(wHost.roomId, { name: "STYLE", color: "#ABCDEF", hat: "crown" }),
+  await client.joinById(wHost.roomId, { name: "STYLE", colorId: "brown", hat: "crown" }),
 );
 await sleep(400);
 const dressedOnHost = () => wHost.state.players.get(dressed.sessionId);
-check("join colour applied and lower-cased", dressedOnHost()?.color === "#abcdef", dressedOnHost()?.color);
+check("join palette colour honoured", dressedOnHost()?.colorId === "brown", dressedOnHost()?.colorId);
+check(
+  "player colour tracks the palette id",
+  dressedOnHost()?.color === lobbyColorHex("brown"),
+  dressedOnHost()?.color,
+);
 check("join hat applied", dressedOnHost()?.hat === "crown", dressedOnHost()?.hat);
 
 dressed.send("customize", { color: "not-a-colour", hat: "sombrero" });
 await sleep(300);
 check(
   "junk customise is dropped, not applied",
-  dressedOnHost()?.color === "#abcdef" && dressedOnHost()?.hat === "crown",
+  dressedOnHost()?.color === lobbyColorHex("brown") && dressedOnHost()?.hat === "crown",
   `color=${dressedOnHost()?.color} hat=${dressedOnHost()?.hat}`,
 );
 
-dressed.send("customize", { color: "#112233", hat: "party" });
+dressed.send("customize", { hat: "party" });
 await sleep(300);
-check(
-  "a valid customise restyles the player",
-  dressedOnHost()?.color === "#112233" && dressedOnHost()?.hat === "party",
-  `color=${dressedOnHost()?.color} hat=${dressedOnHost()?.hat}`,
-);
+check("a valid hat customise restyles the player", dressedOnHost()?.hat === "party", `${dressedOnHost()?.hat}`);
 
 wHost.send("customize", { hat: "halo" });
 await sleep(300);
 check("customise only touches the sender", dressedOnHost()?.hat === "party", `${dressedOnHost()?.hat}`);
+
+console.log("\n=== colour ownership ===");
+const cHost = track(await client.create(ROOM_NAME, { name: "CHOST" }));
+await sleep(200);
+// Not tracked for teardown — this one leaves mid-test on purpose.
+const cGuest = await client.joinById(cHost.roomId, { name: "CGUEST" });
+await sleep(400);
+const cHostP = () => cHost.state.players.get(cHost.sessionId);
+const cGuestP = () => cHost.state.players.get(cGuest.sessionId);
+check(
+  "joiners get distinct auto-assigned colours",
+  !!cHostP()?.colorId && cHostP()?.colorId !== cGuestP()?.colorId,
+  `${cHostP()?.colorId} vs ${cGuestP()?.colorId}`,
+);
+
+cHost.onMessage("colorRejected", () => {}); // the real client flashes "taken"
+const guestColor = cGuestP()?.colorId;
+cHost.send("setColor", { colorId: guestColor });
+await sleep(300);
+check("a taken colour is refused", cHostP()?.colorId !== guestColor, `${cHostP()?.colorId}`);
+
+cHost.send("setColor", { colorId: "pink" });
+await sleep(300);
+check("a free colour is claimed", cHostP()?.colorId === "pink", `${cHostP()?.colorId}`);
+check("claim updates the drawn hex", cHostP()?.color === lobbyColorHex("pink"), `${cHostP()?.color}`);
+
+const freed = cGuestP()?.colorId;
+await cGuest.leave();
+await sleep(400);
+check("a left player releases their colour", ![...cHost.state.players.values()].some((p) => p.colorId === freed), freed);
+cHost.send("setColor", { colorId: freed });
+await sleep(300);
+check("the freed colour can now be claimed", cHostP()?.colorId === freed, `${cHostP()?.colorId}`);
 
 console.log("\n=== ready gate ===");
 const rHost = track(await client.create(ROOM_NAME, { name: "RHOST" }));
