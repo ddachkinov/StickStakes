@@ -108,13 +108,6 @@ export const ArenaState = schema(
     phase: t.string().default("lobby"),
     /** Session id of the host — the only client whose start/replay buttons work. */
     hostId: t.string().default(""),
-    /**
-     * Solo pause. Only ever set when there is exactly one player in the room:
-     * with company, one person's menu must not stop everyone else's fight, so
-     * the menu is purely local for them. While this is true the world holds
-     * still — every body frozen, every phase timer parked.
-     */
-    paused: t.boolean().default(false),
     /** 1-based; which round of the match is being played or was just played. */
     round: t.uint8().default(0),
     totalRounds: t.uint8().default(TOTAL_ROUNDS),
@@ -149,6 +142,21 @@ export const ArenaState = schema(
      * app-store and payment-services rules that implies.
      */
     stake: t.string().default(DEFAULT_STAKE),
+
+    /**
+     * Solo pause. Only ever set when there is exactly one player in the room:
+     * with company, one person's menu must not stop everyone else's fight, so
+     * the menu is purely local for them. While this is true the world holds
+     * still — every body frozen, every phase timer parked.
+     *
+     * Deliberately LAST, and new fields should keep going on the end. Fields
+     * are addressed on the wire by their declaration index, so inserting one
+     * mid-list renumbers every field after it — and a client still running the
+     * previous bundle (a tab that reconnects across a deploy without being
+     * reloaded) would then decode the whole state one field out of step.
+     * Appending is invisible to it.
+     */
+    paused: t.boolean().default(false),
   },
   "ArenaState",
 );
