@@ -58,6 +58,7 @@ jobs:
       - name: Start the stack and run the suites
         env:
           FEEL_REQUIRE_BROWSER: "1"
+          SERVER_URL: "http://127.0.0.1:2567"
         run: |
           npm run dev > /tmp/dev.log 2>&1 &
           echo "waiting for the server and client to come up..."
@@ -74,8 +75,8 @@ jobs:
           up=""
           streak=0
           for i in $(seq 1 90); do
-            if curl -sf http://localhost:2567/health > /dev/null \
-               && curl -sf http://localhost:5173/ > /dev/null; then
+            if curl -sf http://127.0.0.1:2567/health > /dev/null \
+               && curl -sf http://127.0.0.1:5173/ > /dev/null; then
               streak=$((streak + 1))
             else
               streak=0
@@ -92,6 +93,19 @@ jobs:
             cat /tmp/dev.log
             exit 1
           fi
+          echo "waiting for the initial shared watch compile to settle..."
+          for i in $(seq 1 90); do
+            if grep -q "Found 0 errors. Watching for file changes." /tmp/dev.log; then
+              break
+            fi
+            sleep 1
+          done
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:2567/health > /dev/null; then
+              break
+            fi
+            sleep 1
+          done
           npm test
 
       - name: Server log on failure
