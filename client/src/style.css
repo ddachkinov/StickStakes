@@ -44,7 +44,11 @@ body {
   background: var(--bg);
   color: var(--ink);
   font: 500 14px/1.35 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  /* Thumbs are for the game, not for scrolling or zooming the page. */
+  /* Thumbs are for the game, not for scrolling or zooming the page. This is
+     inherited by every touch that starts inside the page, so anything that
+     genuinely needs to scroll has to say so itself — see `pan-y` below on each
+     panel's scroller. Without that, an overflowing lobby simply cannot be
+     dragged with a thumb. */
   touch-action: none;
   overscroll-behavior: none;
   user-select: none;
@@ -383,10 +387,14 @@ body {
   display: none;
 }
 
+/* Above the landing screen (z-index 10) on purpose. These are global controls
+   — sound and fullscreen belong to the whole app, not to whatever screen
+   happens to be up — and at z-index 2 the landing screen simply swallowed
+   every tap on them, which is why fullscreen appeared to do nothing at all. */
 #fullscreen,
 #mute {
   position: fixed;
-  z-index: 2;
+  z-index: 11;
   top: var(--safe-t);
   right: var(--safe-r);
   width: 34px;
@@ -417,6 +425,194 @@ body {
 
 #mute[aria-pressed="true"] {
   opacity: 0.5;
+}
+
+/* Nothing to offer — no fullscreen API (an iPhone), or the app is already
+   running fullscreen as an installed PWA. A dead button is worse than none. */
+#fullscreen[hidden] {
+  display: none;
+}
+
+#fullscreen[aria-pressed="true"] {
+  background: var(--surface-2);
+  border-color: var(--stroke-2);
+}
+
+/* ================================================================ the menu */
+
+/* Third in the top-right row, and deliberately the highest thing on screen:
+   the way out has to work even under the portrait "turn your phone" takeover,
+   which is exactly when someone wants it. */
+#pause {
+  position: fixed;
+  z-index: 11;
+  top: var(--safe-t);
+  right: calc(var(--safe-r) + 80px);
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--stroke);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1;
+}
+
+@supports (backdrop-filter: blur(6px)) {
+  #pause {
+    backdrop-filter: blur(10px);
+  }
+}
+
+#pause:active {
+  transform: translateY(1px);
+}
+
+#pause[hidden] {
+  display: none;
+}
+
+#pause[aria-expanded="true"] {
+  background: var(--surface-2);
+  border-color: var(--stroke-2);
+}
+
+#menu {
+  position: fixed;
+  z-index: 12;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--gap-4);
+  /* Dim the fight behind it, so the card reads without stealing the screen. */
+  background: rgba(8, 10, 14, 0.72);
+}
+
+#menu[hidden] {
+  display: none;
+}
+
+#menu-card {
+  width: min(340px, 100%);
+  max-height: calc(100dvh - 2 * var(--gap-4));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-3);
+  padding: var(--gap-4);
+  border-radius: var(--r-3);
+  background: linear-gradient(180deg, rgba(28, 35, 51, 0.96), rgba(13, 16, 22, 0.97));
+  border: 1px solid var(--stroke-2);
+  box-shadow: var(--shadow);
+}
+
+@supports (backdrop-filter: blur(6px)) {
+  #menu-card {
+    backdrop-filter: blur(18px) saturate(1.1);
+  }
+}
+
+#menu-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+#menu-title {
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+}
+
+#menu-sub {
+  font-size: 12px;
+  color: var(--dim);
+}
+
+#menu-sub:empty {
+  display: none;
+}
+
+#menu-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-2);
+}
+
+.menu-btn {
+  padding: 12px 14px;
+  border-radius: var(--r-2);
+  border: 1px solid var(--stroke-2);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 700;
+  text-align: center;
+}
+
+.menu-btn[hidden] {
+  display: none;
+}
+
+.menu-btn:active {
+  transform: translateY(1px);
+}
+
+.menu-btn.is-primary {
+  background: var(--ink);
+  border-color: transparent;
+  color: #10141b;
+}
+
+/* Leaving is the one destructive thing on the card, so it looks like it —
+   and once it is armed for a match you can't rejoin, it looks like it twice. */
+.menu-btn.is-leave {
+  color: #ff8a8f;
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+.menu-btn.is-leave.is-armed {
+  background: var(--accent);
+  border-color: transparent;
+  color: var(--accent-ink);
+}
+
+#menu-warn {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--dim);
+  text-align: center;
+}
+
+#menu-warn[hidden] {
+  display: none;
+}
+
+/* Landscape phone: the card competes with the fight for a very short screen,
+   so lay the buttons out in a grid instead of a tower. */
+@media (max-height: 460px) {
+  #menu-card {
+    width: min(460px, 100%);
+    gap: var(--gap-2);
+    padding: var(--gap-3);
+  }
+
+  #menu-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .menu-btn {
+    padding: 10px 12px;
+  }
+
+  #menu-title {
+    font-size: 17px;
+  }
 }
 
 /* ============================================================ shared panel */
@@ -531,6 +727,19 @@ body {
   pointer-events: auto;
 }
 
+/* The panels themselves pass pointers through, so only real controls take
+   taps. A scroll container has to take them as well, though: a drag that lands
+   on the card's background and falls through to the canvas underneath scrolls
+   nothing at all, which is the other half of why these panels felt stuck on a
+   phone. Their boxes are the visible cards, so this captures nothing beyond
+   them. */
+#lobby-scroll,
+#lobby-foot,
+#result-scroll,
+.result-actions {
+  pointer-events: auto;
+}
+
 #lobby-scroll,
 #result-scroll {
   flex: 1 1 auto;
@@ -538,6 +747,9 @@ body {
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
+  /* Same exception as the landing screen: without this the panel overflows
+     and refuses to move under a thumb, which is a dead end on a phone. */
+  touch-action: pan-y;
   display: flex;
   flex-direction: column;
   gap: var(--gap-3);
@@ -785,6 +997,24 @@ body {
   box-shadow: 0 10px 22px -8px rgba(255, 209, 102, 0.55);
 }
 
+/* The way back out of the lobby. Quiet on purpose — it sits under the ready
+   count, well clear of the two big CTAs above it, so it is easy to find and
+   hard to hit by accident. */
+.lobby-quiet {
+  align-self: center;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: var(--r-1);
+  background: none;
+  color: var(--dim);
+  font: inherit;
+  font-size: 11px;
+}
+
+.lobby-quiet:active {
+  color: var(--ink);
+}
+
 #lobby-foot-meta {
   margin: 0;
   display: flex;
@@ -828,6 +1058,10 @@ body {
   min-width: 0;
   overflow-x: auto;
   overflow-y: hidden;
+  /* Sideways is this strip's whole job, and the body forbids panning by
+     default — so it takes that one axis back, and only that one. */
+  touch-action: pan-x;
+  overscroll-behavior: contain;
   padding-bottom: 2px;
   scrollbar-width: none;
   -webkit-overflow-scrolling: touch;
@@ -1101,6 +1335,10 @@ button:disabled {
   padding-top: max(var(--gap-4), var(--safe-t));
   background: radial-gradient(120% 90% at 50% 0%, #1a2130 0%, var(--bg) 68%);
   overflow-y: auto;
+  overscroll-behavior: contain;
+  /* The body forbids panning; this is a real scroll container, so it grants
+     itself the one gesture it needs back. */
+  touch-action: pan-y;
   -webkit-overflow-scrolling: touch;
 }
 
@@ -1287,15 +1525,18 @@ button:disabled {
     grid-row: 1 / span 3;
   }
 
-  /* The fighter showcase is a portrait luxury; a landscape phone has no room
-     for it. Keep the name/role line. */
-  #lobby-hero .hero-stage,
-  .hero-stage-win {
-    display: none;
+  /* The fighter showcase used to be dropped here outright, which took the
+     preview away exactly where people are picking a colour and a hat. It stays
+     — just shorter, so it costs a slice of a short screen rather than half of
+     one. The panel scrolls if it still doesn't fit. */
+  #lobby-hero .hero-stage {
+    max-height: 92px;
   }
 
-  #lobby-hero {
-    gap: 0;
+  .hero-stage-win {
+    max-height: 104px;
+    width: min(320px, 100%);
+    margin: 0 auto;
   }
 
   #lobby-setup {
@@ -1320,19 +1561,67 @@ button:disabled {
     align-self: start;
   }
 
-  /* Landing: no room for the full stack; drop the showcase and tagline. */
-  #landing-card .tagline,
+  /* Landing in landscape: two columns rather than a dropped preview. The
+     stickman you are dressing goes down the left with the title; everything
+     you touch goes down the right. Placed row by row explicitly, because
+     auto-placement across two columns leaves holes wherever the taller column
+     runs out. */
+  #landing-card {
+    width: min(680px, 100%);
+    display: grid;
+    grid-template-columns: minmax(0, 240px) minmax(0, 1fr);
+    grid-template-rows: repeat(6, auto);
+    align-content: start;
+    column-gap: var(--gap-4);
+    row-gap: var(--gap-2);
+  }
+
+  .landing-head {
+    grid-area: 1 / 1;
+    text-align: left;
+  }
+
+  /* Spans the rest of the left column so the preview is as tall as the form
+     is, instead of a stamp with a hole under it. */
   .landing-hero {
-    display: none;
+    grid-area: 2 / 1 / span 5 / 2;
+    align-self: start;
+    margin-bottom: 0;
+  }
+
+  #landing-name-field {
+    grid-area: 1 / 2;
+  }
+  #landing-wardrobe {
+    grid-area: 2 / 2;
+  }
+  #landing-create {
+    grid-area: 3 / 2;
+  }
+  #landing-card .divider {
+    grid-area: 4 / 2;
+  }
+  #landing-card .join-row {
+    grid-area: 5 / 2;
+  }
+  #landing-error {
+    grid-area: 6 / 2;
+    text-align: left;
   }
 
   #landing-card h1 {
-    font-size: 22px;
+    font-size: 24px;
   }
+
+  #landing-card .tagline {
+    font-size: 12px;
+  }
+
 }
 
-/* Very short (landscape on a small phone): tighten the landing controls. */
-@media (max-height: 400px) {
+/* Short viewport (any landscape phone): tighten the wardrobe so the fighter
+   preview beside it doesn't cost anyone a scroll. */
+@media (max-height: 460px) {
   .swatch,
   #landing .wardrobe-custom,
   #lobby .wardrobe-custom {

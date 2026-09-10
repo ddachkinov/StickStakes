@@ -92,6 +92,9 @@
           <span id="lobby-ready-count"></span>
           <span id="lobby-hint"></span>
         </p>
+        <button id="lobby-leave" type="button" class="lobby-quiet">
+          <span aria-hidden="true">←</span> Back to the main menu
+        </button>
       </div>
     </div>
 
@@ -121,6 +124,35 @@
     <div id="hud"><span id="status"></span></div>
     <button id="mute" type="button" aria-label="Sound" aria-pressed="false">🔊</button>
     <button id="fullscreen" type="button" aria-label="Fullscreen">⛶</button>
+    <!-- The way out of a game. Hidden until there is one to be in. -->
+    <button
+      id="pause"
+      type="button"
+      aria-label="Menu"
+      aria-expanded="false"
+      aria-controls="menu"
+      hidden
+    >
+      ⏸
+    </button>
+
+    <!-- Pause / leave. Solo, this really does stop the fight; in company it
+         is a local card and says so. -->
+    <div id="menu" hidden role="dialog" aria-modal="true" aria-labelledby="menu-title">
+      <div id="menu-card">
+        <div id="menu-head">
+          <strong id="menu-title">Menu</strong>
+          <span id="menu-sub"></span>
+        </div>
+        <div id="menu-actions">
+          <button id="menu-resume" type="button" class="menu-btn is-primary">Resume</button>
+          <button id="menu-restart" type="button" class="menu-btn" hidden>Restart match</button>
+          <button id="menu-lobby" type="button" class="menu-btn" hidden>Back to the lobby</button>
+          <button id="menu-leave" type="button" class="menu-btn is-leave">Leave the game</button>
+        </div>
+        <p id="menu-warn" hidden></p>
+      </div>
+    </div>
 
     <!-- Shown over the fight when a phone is held upright. -->
     <div id="rotate" hidden>
@@ -143,7 +175,7 @@
           </div>
         </div>
 
-        <label class="field">
+        <label class="field" id="landing-name-field">
           <span class="label">Your name</span>
           <input id="landing-name" type="text" maxlength="12" placeholder="Dimitar" />
         </label>

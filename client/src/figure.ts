@@ -238,7 +238,9 @@ export function drawStickFigure(
 export interface FighterShowcase {
   /** Update the look; the loop picks it up on the next frame. */
   set(color: string, hat: string): void;
-  /** Stop the animation loop (on teardown). */
+  /** Restart a stopped loop. A no-op while it is already running. */
+  start(): void;
+  /** Stop the animation loop (on teardown, or while the panel is put away). */
   stop(): void;
 }
 
@@ -296,8 +298,13 @@ export function createFighterShowcase(
       color = nextColor;
       hat = nextHat;
     },
+    start() {
+      if (raf) return;
+      raf = requestAnimationFrame(frame);
+    },
     stop() {
       cancelAnimationFrame(raf);
+      raf = 0;
     },
   };
 }

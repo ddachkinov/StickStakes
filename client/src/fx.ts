@@ -70,6 +70,7 @@ export interface FxStats {
   lands: number;
   swings: number;
   rounds: number;
+  /** Strongest shake ENVELOPE reached, in px — see `update()`. */
   peakShake: number;
   peakParticles: number;
 }
@@ -141,7 +142,12 @@ export function createFx(audio: Audio) {
       const magnitude = MAX_SHAKE_PX * trauma * trauma;
       shakeX = magnitude * (Math.random() * 2 - 1);
       shakeY = magnitude * (Math.random() * 2 - 1);
-      stats.peakShake = Math.max(stats.peakShake, Math.abs(shakeX), Math.abs(shakeY));
+      // The ENVELOPE, not the offset that happened to be drawn this frame.
+      // Each frame dithers uniformly inside ±magnitude, so a short shake seen
+      // over a handful of frames can easily never draw near its own peak — and
+      // the number that says whether a hit is calibrated ("0.55 → ~5px", above)
+      // is the envelope, not the dither.
+      stats.peakShake = Math.max(stats.peakShake, magnitude);
     } else {
       shakeX = 0;
       shakeY = 0;

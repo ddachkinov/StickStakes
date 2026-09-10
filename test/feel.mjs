@@ -185,30 +185,64 @@ check("the landing raised dust", afterJump.lands > beforeJump.lands, `${beforeJu
 
 console.log("\n=== a hit ===");
 // Walk the attacker into range, then swing until damage lands.
-const BRAKE_GAP = 40;
+/**
+ * A right-facing hitbox spans `x + 6.6 … x + 36.6` and the target's box is
+ * ±PLAYER_WIDTH/2, so a swing connects when the target sits between about 4px
+ * behind and 48px in front of the attacker, measured toward its facing. Treat
+ * the edges of that band as out.
+ */
+const BAND_MIN = 2;
+const BAND_MAX = 40;
+/** Run until roughly this close, then stop and walk the last bit. */
+const RUN_UNTIL = 70;
+
+/** Would a swing thrown right now actually reach the target? */
+function inStrikingPosition() {
+  const forward = (def().x - atk().x) * (atk().facing >= 0 ? 1 : -1);
+  return forward >= BAND_MIN && forward <= BAND_MAX;
+}
+
+/**
+ * Walk the attacker to a position its next swing can connect from.
+ *
+ * "Within 40px of the target" is not that position, and aiming for it is what
+ * made this flaky. Running flat out and braking there lets friction carry the
+ * attacker *across* the target during the settle; the old correction then
+ * tapped it back the other way and returned without re-checking, so it dithered
+ * around a gap of zero with the target behind it on every attempt
+ * (`gap=-5 facing=1 | gap=19 facing=-1 | gap=0 facing=1 …`) and whiffed every
+ * swing.
+ *
+ * So: run only until roughly in reach, come to a complete stop, then close the
+ * last stretch in short steps from rest. A step from standing moves a few
+ * pixels, which cannot skip over a 38px-wide band, and stepping toward the
+ * target is also what sets facing — so arriving and aiming are the same act.
+ * Only the real geometry ends the walk.
+ */
 async function closeIn(timeout = 12000) {
   const t0 = Date.now();
-  while (Date.now() - t0 < timeout) {
-    const gap = def().x - atk().x;
-    if (Math.abs(gap) <= BRAKE_GAP) {
-      a.intent.left = a.intent.right = false;
-      await sleep(200);
-      const settled = def().x - atk().x;
-      if (Math.sign(settled) !== Math.sign(atk().facing) && settled !== 0) {
-        a.intent.right = settled > 0;
-        a.intent.left = settled < 0;
-        await sleep(70);
-        a.intent.left = a.intent.right = false;
-        await sleep(160);
-      }
-      return;
-    }
-    a.intent.right = gap > 0;
-    a.intent.left = gap < 0;
+
+  while (Date.now() - t0 < timeout && Math.abs(def().x - atk().x) > RUN_UNTIL) {
+    const toward = Math.sign(def().x - atk().x) || 1;
+    a.intent.right = toward > 0;
+    a.intent.left = toward < 0;
     await sleep(30);
   }
   a.intent.left = a.intent.right = false;
-  throw new Error("could not close to attack range");
+  await sleep(200); // let the run bleed off, so the steps below start from rest
+
+  while (Date.now() - t0 < timeout) {
+    if (inStrikingPosition()) return true;
+    const step = Math.sign(def().x - atk().x) || 1;
+    a.intent.right = step > 0;
+    a.intent.left = step < 0;
+    await sleep(60);
+    a.intent.left = a.intent.right = false;
+    await sleep(140);
+  }
+
+  a.intent.left = a.intent.right = false;
+  throw new Error("could not reach a striking position");
 }
 
 await closeIn();
@@ -221,8 +255,35 @@ const beforeHit = await feel();
  * FEEDBACK, "a hit was rendered" is the real subject. Whether the right target
  * took it is combat's business, and test:combat already owns that.
  */
+/*
+ * A whiff says nothing on its own, so each attempt records the three things a
+ * hit actually needs — the target in reach, in front, and hittable — and the
+ * check prints them if it never lands. `gap` must fall inside roughly
+ * (-4, 48) measured toward `facing`; i-frames must have lapsed.
+ *
+ * The loop is also patient about getting there. A swing knocks the target
+ * away, so the walk back in is a fresh problem every time: an approach that
+ * runs out of time costs one attempt rather than throwing out of the suite,
+ * which is what `closeIn` un-caught used to do.
+ */
+const attempts = [];
 let connected = false;
-for (let i = 0; i < 6 && !connected; i++) {
+
+for (let i = 0; i < 8 && !connected; i++) {
+  // A fresh spawn is briefly unhittable, and so is a target still in its
+  // i-frames from the last death — swinging at one is a guaranteed whiff.
+  await waitFor(
+    () => def().invulnUntilTick <= state().tick,
+    "i-frames to lapse",
+    3000,
+  ).catch(() => {});
+
+  attempts.push(
+    `gap=${Math.round(def().x - atk().x)} facing=${atk().facing} ` +
+      `dy=${Math.round(def().y - atk().y)} ` +
+      `iframes=${Math.max(0, def().invulnUntilTick - state().tick)}`,
+  );
+
   a.intent.attack = true;
   await sleep(200);
   a.intent.attack = false;
@@ -231,12 +292,15 @@ for (let i = 0; i < 6 && !connected; i++) {
     connected = (await feel()).hits > beforeHit.hits;
     await sleep(15);
   }
-  if (!connected) {
-    await sleep(ATTACK_RECOVERY_MS + 60);
-    await closeIn(3000);
-  }
+  if (connected) break;
+
+  // Let the recovery run out, let the target come back to ground, then walk
+  // in again with a budget that suits however far the last swing sent it.
+  await sleep(ATTACK_RECOVERY_MS + 60);
+  await waitFor(() => def().grounded, "the defender to settle", 3000).catch(() => {});
+  await closeIn(5000).catch(() => {});
 }
-check("the fight actually connected", connected);
+check("the fight actually connected", connected, attempts.join(" | "));
 
 // Sample fast: sparks and shake both decay within a few hundred ms.
 let sawParticles = 0;

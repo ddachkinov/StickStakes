@@ -19,9 +19,10 @@ Open <http://localhost:5173> in **two browser tabs** — you need two players fo
 anything interesting to happen. Create a game in the first tab, copy the
 four-letter code, join with it in the second.
 
-Keyboard controls: arrows or WASD to move, space to jump, **J** to attack. On a
-touchscreen the left half of the screen is a floating drag stick and the right
-half has jump and attack.
+Keyboard controls: arrows or WASD to move, space to jump, **J** to attack, and
+**Escape** for the pause menu. On a touchscreen the left half of the screen is a
+floating drag stick, the right half has jump and attack, and ⏸ in the top-right
+corner opens the same menu.
 
 `npm run dev` starts three things at once: `tsc --watch` on `shared/`, the
 Colyseus server on `:2567`, and Vite on `:5173`. Vite proxies `/colyseus` to the
@@ -74,7 +75,7 @@ asserting only exist once two clients and an authoritative tick are talking.
 
 ```bash
 npm run dev    # one terminal
-npm test       # another — lobby, match, combat, feel
+npm test       # another — lobby, match, combat, menu, feel
 ```
 
 | Suite | What it covers |
@@ -82,6 +83,7 @@ npm test       # another — lobby, match, combat, feel
 | `test:lobby` | Room codes, join-by-code, capacity, host-only configuration |
 | `test:match` | The whole state machine: start, rounds, lives, elimination, replay |
 | `test:combat` | Damage, knockback direction and scaling, hitstun, i-frames |
+| `test:menu` | Solo pause, the host's restart / back-to-lobby, and the quit lockout |
 | `test:feel` | Drives a real fight in a real browser and asserts the feedback fired |
 
 `test:feel` needs a Chromium. It uses `playwright-core`, which ships without one

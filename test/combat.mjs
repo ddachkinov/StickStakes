@@ -60,44 +60,62 @@ async function waitFor(predicate, label, timeout = 15000) {
 
 /**
  * A right-facing hitbox spans `x + 6.6 … x + 36.6` and the target's box is
- * ±PLAYER_WIDTH/2, so a hit needs a signed gap in roughly (-4, 48). Aim for the
- * middle of that band.
+ * ±PLAYER_WIDTH/2, so a swing connects when the target sits between about 4px
+ * behind and 48px in front of the attacker, measured toward its facing. Treat
+ * the edges of that band as out.
  */
-const BRAKE_GAP = 40;
+const BAND_MIN = 2;
+const BAND_MAX = 40;
+/** Run until roughly this close, then stop and walk the last bit. */
+const RUN_UNTIL = 70;
+
+/** Would a swing thrown right now actually reach the target? */
+function inStrikingPosition() {
+  const forward = (def().x - atk().x) * (atk().facing >= 0 ? 1 : -1);
+  return forward >= BAND_MIN && forward <= BAND_MAX;
+}
 
 /**
- * Walk the attacker to a comfortable striking distance and stop.
+ * Walk the attacker to a position its next swing can connect from.
  *
- * Braking early matters: walking right up to the target lets friction carry the
- * attacker *past* it during the settle, which leaves it facing away and every
- * swing whiffs. Approaching also sets facing, so no separate turn is needed —
- * except after an overshoot, which is corrected explicitly below.
+ * "Within 40px of the target" is not that position, and aiming for it is what
+ * made this flaky. Running flat out and braking there lets friction carry the
+ * attacker *across* the target during the settle; the old correction then
+ * tapped it back the other way and returned without re-checking, so it dithered
+ * around a gap of zero with the target behind it on every attempt
+ * (`gap=-5 facing=1 | gap=19 facing=-1 | gap=0 facing=1 …`) and whiffed every
+ * swing.
+ *
+ * So: run only until roughly in reach, come to a complete stop, then close the
+ * last stretch in short steps from rest. A step from standing moves a few
+ * pixels, which cannot skip over a 38px-wide band, and stepping toward the
+ * target is also what sets facing — so arriving and aiming are the same act.
+ * Only the real geometry ends the walk.
  */
 async function closeIn(timeout = 12000) {
   const t0 = Date.now();
-  while (Date.now() - t0 < timeout) {
-    const gap = def().x - atk().x;
-    if (Math.abs(gap) <= BRAKE_GAP) {
-      a.intent.left = a.intent.right = false;
-      await sleep(200); // let friction settle so the swing starts from rest
 
-      // Overshot during the coast? Turn back toward the target.
-      const settled = def().x - atk().x;
-      if (Math.sign(settled) !== Math.sign(atk().facing) && settled !== 0) {
-        a.intent.right = settled > 0;
-        a.intent.left = settled < 0;
-        await sleep(70);
-        a.intent.left = a.intent.right = false;
-        await sleep(160);
-      }
-      return true;
-    }
-    a.intent.right = gap > 0;
-    a.intent.left = gap < 0;
+  while (Date.now() - t0 < timeout && Math.abs(def().x - atk().x) > RUN_UNTIL) {
+    const toward = Math.sign(def().x - atk().x) || 1;
+    a.intent.right = toward > 0;
+    a.intent.left = toward < 0;
     await sleep(30);
   }
   a.intent.left = a.intent.right = false;
-  throw new Error("could not close to attack range");
+  await sleep(200); // let the run bleed off, so the steps below start from rest
+
+  while (Date.now() - t0 < timeout) {
+    if (inStrikingPosition()) return true;
+    const step = Math.sign(def().x - atk().x) || 1;
+    a.intent.right = step > 0;
+    a.intent.left = step < 0;
+    await sleep(60);
+    a.intent.left = a.intent.right = false;
+    await sleep(140);
+  }
+
+  a.intent.left = a.intent.right = false;
+  throw new Error("could not reach a striking position");
 }
 
 /**
@@ -223,21 +241,49 @@ if (def().lives > 0) {
 }
 
 console.log("\n=== knockback scales with damage ===");
-// Drive the defender's damage up, sampling launch speed at low vs high %.
+/**
+ * Drive the defender's damage up, sampling launch speed at low vs high %.
+ *
+ * The section is deliberately patient about *how* it gets its samples, because
+ * the property under test fights the harness: every hit throws the defender
+ * further than the last, so each successive approach is a longer walk. Three
+ * rules keep that from turning into a flaky suite.
+ *
+ *  - A failed approach costs one attempt, never the section. An early launch
+ *    toward a far ledge (or off the map, which respawns the defender at 0%)
+ *    used to end the run with one sample and fail on the count alone.
+ *  - The walk gets a budget that suits the last launch, not the first.
+ *  - Enough attempts and wall-clock room to reach a comfortable margin over
+ *    the two samples the comparison actually needs.
+ *
+ * The assertions below are unchanged: a shortfall still fails loudly, because
+ * failing to land two hits in this long really would mean combat is broken.
+ */
+const SAMPLE_TARGET = 4;
+const SAMPLE_DEADLINE = Date.now() + 75_000;
 const samples = [];
-for (let i = 0; i < 8 && def().lives > 0; i++) {
+
+for (let i = 0; i < 12; i++) {
+  if (samples.length >= SAMPLE_TARGET || Date.now() > SAMPLE_DEADLINE) break;
+  if (def().lives === 0) break;
+
   await waitFor(() => !def().stunned, "stun clear", 4000).catch(() => {});
   await waitFor(() => def().grounded, "landing", 6000).catch(() => {});
   if (def().lives === 0) break;
+
   try {
-    await closeIn(4000);
+    // Generous: after a hit at high damage the defender can be
+    // *most of the arena* away, and the attacker gets there on foot.
+    await closeIn(8000);
   } catch {
-    break;
+    continue; // out of reach this time; let it settle and try again
   }
+
   const dmgBefore = def().damage;
   const { dealt: got } = await swing();
   if (got > 0) samples.push({ damage: dmgBefore + got, vx: Math.abs(def().vx) });
 }
+
 console.log(
   "   samples: " + samples.map((s) => `${s.damage}%→${Math.round(s.vx)}px/s`).join("  "),
 );

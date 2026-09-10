@@ -19,11 +19,12 @@ import { createHud } from "./hud.js";
 import { createInput } from "./input.js";
 import { createLanding } from "./landing.js";
 import { createLobbyPanel } from "./lobby.js";
+import { createPauseMenu } from "./menu.js";
 import { createRenderer } from "./render.js";
 import { createResultPanel, shareText } from "./result.js";
 import { share } from "./share.js";
 import { createArena, describeJoinError, joinArenaByCode, type ArenaRoom } from "./net.js";
-import { createWakeLock, registerServiceWorker } from "./pwa.js";
+import { createFullscreen, createWakeLock, registerServiceWorker } from "./pwa.js";
 import { createAudio } from "./audio.js";
 import { createFx } from "./fx.js";
 import { haptics } from "./haptics.js";
@@ -31,6 +32,7 @@ import { haptics } from "./haptics.js";
 // Installable, and instant on a repeat launch from the home screen.
 registerServiceWorker();
 const wake = createWakeLock();
+const fullscreen = createFullscreen();
 
 const audio = createAudio();
 const fx = createFx(audio);
@@ -95,6 +97,7 @@ const hud = createHud();
 const landing = createLanding();
 const lobby = createLobbyPanel();
 const result = createResultPanel();
+const menu = createPauseMenu();
 
 function relayout(): void {
   renderer.resize();
@@ -105,10 +108,27 @@ relayout();
 window.addEventListener("resize", relayout);
 window.addEventListener("orientationchange", relayout);
 
-fullscreenBtn.addEventListener("click", () => {
-  if (document.fullscreenElement) void document.exitFullscreen();
-  else void document.documentElement.requestFullscreen?.().catch(() => {});
+/**
+ * Fullscreen, if this browser has any. Where it doesn't — an iPhone, or an
+ * already-fullscreen installed PWA — the button goes away rather than sitting
+ * there doing nothing when pressed.
+ */
+function paintFullscreenButton(): void {
+  const on = fullscreen.active;
+  fullscreenBtn.textContent = on ? "⤡" : "⛶";
+  fullscreenBtn.setAttribute("aria-pressed", String(on));
+  fullscreenBtn.setAttribute("aria-label", on ? "Leave fullscreen" : "Fullscreen");
+}
+
+fullscreenBtn.hidden = !fullscreen.supported;
+paintFullscreenButton();
+fullscreen.onChange(() => {
+  paintFullscreenButton();
+  // Entering or leaving changes the viewport without always firing `resize`
+  // first, and a canvas sized to the old box is a letterboxed arena.
+  relayout();
 });
+fullscreenBtn.addEventListener("click", () => fullscreen.toggle());
 
 /** The link that gets someone straight into this room. */
 function inviteUrl(code: string): string {
@@ -140,8 +160,15 @@ function swingProgress(player: Player, tick: number): number {
   return Math.min(1, Math.max(0, 1 - remaining / total));
 }
 
-/** Landing screen → a joined room. Loops until something works. */
-async function connect(): Promise<ArenaRoom> {
+/**
+ * Landing screen → a joined room. Loops until something works.
+ *
+ * `notice` is how a finished session explains itself — "you left", "the
+ * connection dropped" — so the player lands back on the front screen already
+ * knowing why they are looking at it.
+ */
+async function connect(notice = ""): Promise<ArenaRoom> {
+  if (notice) landing.reject(notice);
   for (;;) {
     const choice = await landing.choose();
     try {
@@ -165,12 +192,48 @@ async function connect(): Promise<ArenaRoom> {
   }
 }
 
-async function main(): Promise<void> {
-  const room = await connect();
+/**
+ * One game, start to finish. Resolves when the room is left — deliberately
+ * from the menu, or because the connection went away — with a line to show on
+ * the landing screen, or "" if leaving was the player's own idea.
+ *
+ * Everything in here belongs to this room: the reconciler, the state
+ * listeners, the frame loop. Nothing survives into the next session, which is
+ * what makes "leave and start another" work at all.
+ */
+async function runSession(room: ArenaRoom): Promise<string> {
+  /** Flipped false exactly once, by `endSession()`. Stops the frame loop. */
+  let live = true;
+  /** What the landing screen should say about how this ended. */
+  let notice = "";
+  let settleEnd: () => void;
+  const ended = new Promise<void>((resolve) => {
+    settleEnd = resolve;
+  });
+
+  function endSession(): void {
+    if (!live) return;
+    live = false;
+    // Out of the game — let the phone sleep like a phone again, and never
+    // leave a vibration pattern running after the connection drops.
+    wake.release();
+    haptics.stop();
+    fx.clear();
+    // A thumb that was down when the game ended must not be down when the
+    // next one starts.
+    input.setEnabled(false);
+    menu.hide();
+    lobby.hide();
+    result.hide();
+    fightingNow = false;
+    updateRotateGate();
+    settleEnd();
+  }
 
   // In a game now: keep the screen lit. Requesting it after the landing screen
   // means it always follows a real tap, which is what browsers want to see.
   wake.acquire();
+  input.setEnabled(false); // the frame loop turns it on once a round is live
 
   /**
    * The input channel. `reliable` is right for WebSocket: every frame arrives
@@ -290,6 +353,24 @@ async function main(): Promise<void> {
 
   lobby.onStart(() => room.send("startMatch"));
   result.onPlayAgain(() => room.send("startMatch"));
+
+  /**
+   * Out of the room and back to the landing screen. Their own decision, so no
+   * notice waiting for them there — and the session ends now rather than when
+   * the socket does, so the screen changes the instant they press it.
+   */
+  function leaveGame(): void {
+    endSession();
+    void room.leave();
+  }
+
+  menu.on({
+    restart: () => room.send("restartMatch"),
+    toLobby: () => room.send("endMatch"),
+    setPaused: (paused) => room.send("pause", { paused }),
+    leave: leaveGame,
+  });
+  lobby.onLeave(leaveGame);
   lobby.onConfigure((change) => room.send("configure", change));
   lobby.onCustomize((change) => room.send("customize", change));
   lobby.onReady((ready) => room.send("ready", { ready }));
@@ -359,17 +440,18 @@ async function main(): Promise<void> {
   }
 
   room.onLeave((code) => {
-    // Out of the game — let the phone sleep like a phone again, and never
-    // leave a vibration pattern running after the connection drops.
-    wake.release();
-    haptics.stop();
+    // Either we asked (endSession has already run and this is a no-op), or the
+    // connection went away under us — in which case say so on the way out.
+    if (live) notice = `Connection lost (${code}). Pick a game to get back in.`;
     statusEl.textContent = `disconnected (${code})`;
+    endSession();
   });
 
   let debugAt = 0;
   let lastFrame = performance.now();
 
   function frame(now: number): void {
+    if (!live) return; // the room is gone; so is its loop
     const state = room.state;
     const phase = state.phase as MatchPhase;
 
@@ -378,6 +460,15 @@ async function main(): Promise<void> {
     const dt = Math.min(0.05, Math.max(0, (now - lastFrame) / 1000));
     lastFrame = now;
     fx.update(dt);
+
+    // The thumb controls answer only when there is a round to drive and
+    // nothing on top of it. Anything else — a panel, the menu, the rotate
+    // takeover — and every held control is dropped rather than left latched.
+    const playable = phase === "countdown" || phase === "playing";
+    input.setEnabled(playable && !menu.open && !rotateShown);
+    // Second line of defence, every frame: a pointer the browser quietly took
+    // back is the whole reason a stickman ever walked into a wall on its own.
+    input.sweep();
 
     // One driver for the whole prediction stack. Returns how many fixed input
     // steps are due this frame — we send exactly that many, no more.
@@ -437,8 +528,8 @@ async function main(): Promise<void> {
 
     renderer.endWorld();
     // The thumb controls only belong on screen when there is something to
-    // drive — never under the lobby panel or the result card.
-    if (phase === "countdown" || phase === "playing") {
+    // drive — never under the lobby panel, the result card, or the menu.
+    if (playable && !menu.open) {
       renderer.drawControls(input.zones, input.active, input.stick);
     }
 
@@ -457,6 +548,8 @@ async function main(): Promise<void> {
     if (phase === "matchOver") result.update(state, room.sessionId);
     else result.hide();
 
+    menu.update(state, room.sessionId);
+
     if (now - debugAt > 250) {
       debugAt = now;
       const rtt = Math.round(room.clock.rtt());
@@ -464,16 +557,37 @@ async function main(): Promise<void> {
       statusEl.dataset.ping = rtt < 80 ? "good" : rtt < 160 ? "ok" : "bad";
       statusEl.textContent =
         statusEl.dataset.flash ??
-        (import.meta.env.DEV
-          ? `${room.roomId} · ${phase} · ${state.players.size}/${state.maxPlayers} · ` +
-            `${rtt}ms · ${inputHandle.pendingCount} in flight`
-          : `${room.roomId} · ${rtt}ms`);
+        (state.paused
+          ? `${room.roomId} · paused`
+          : import.meta.env.DEV
+            ? `${room.roomId} · ${phase} · ${state.players.size}/${state.maxPlayers} · ` +
+              `${rtt}ms · ${inputHandle.pendingCount} in flight`
+            : `${room.roomId} · ${rtt}ms`);
     }
 
     requestAnimationFrame(frame);
   }
 
   requestAnimationFrame(frame);
+
+  await ended;
+  return notice;
+}
+
+/**
+ * The app: one game after another, with the landing screen in between. Leaving
+ * a room is not the end of anything — it just puts the front screen back up.
+ */
+async function main(): Promise<void> {
+  let notice = "";
+  for (;;) {
+    const room = await connect(notice);
+    notice = await runSession(room);
+    // No game any more, so drop the code from the address bar: a reload from
+    // the landing screen should offer a fresh start, not march back into the
+    // room they just walked out of.
+    history.replaceState(null, "", location.pathname);
+  }
 }
 
 main().catch((error: unknown) => {
